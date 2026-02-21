@@ -36,6 +36,10 @@ enum JSONValue {
         if case .double(let d) = self { return Int(d) }
         return nil
     }
+    var boolValue: Bool? {
+        if case .bool(let b) = self { return b }
+        return nil
+    }
 }
 
 struct ToolDefinition {
@@ -61,6 +65,18 @@ struct ToolProperty {
     let type: String
     let description: String
     let enumValues: [String]?
+    let items: ToolPropertyItems?
+
+    init(type: String, description: String, enumValues: [String]? = nil, items: ToolPropertyItems? = nil) {
+        self.type = type
+        self.description = description
+        self.enumValues = enumValues
+        self.items = items
+    }
+}
+
+struct ToolPropertyItems {
+    let type: String
 }
 
 // MARK: - Stream Events
@@ -234,6 +250,9 @@ class AnthropicClient {
             ]
             if let enumVals = prop.enumValues {
                 propDict["enum"] = enumVals
+            }
+            if let items = prop.items {
+                propDict["items"] = ["type": items.type]
             }
             properties[key] = propDict
         }

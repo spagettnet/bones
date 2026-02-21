@@ -2,9 +2,10 @@ import AppKit
 import WebKit
 
 @MainActor
-class SidebarWindow: NSPanel, ChatControllerDelegate {
+class SidebarWindow: NSPanel, AgentBridgeDelegate {
     private let sidebarWidth: CGFloat = 340
-    private let chatController: ChatController
+    private let agentBridge: AgentBridge
+    private let windowTracker: WindowTracker
     private var tabControl: NSSegmentedControl!
     private var chatContainer: NSView!
     private var debugView: SidebarDebugView!
@@ -12,9 +13,11 @@ class SidebarWindow: NSPanel, ChatControllerDelegate {
     private var inputField: NSTextField!
     private var webViewReady = false
     private var pendingUpdate: [ChatMessageUI]?
+    private var escMonitor: Any?
 
-    init(chatController: ChatController, targetBounds: CGRect) {
-        self.chatController = chatController
+    init(agentBridge: AgentBridge, windowTracker: WindowTracker, targetBounds: CGRect) {
+        self.agentBridge = agentBridge
+        self.windowTracker = windowTracker
 
         let frame = Self.sidebarFrame(forTargetBounds: targetBounds, sidebarWidth: sidebarWidth)
 
@@ -33,16 +36,18 @@ class SidebarWindow: NSPanel, ChatControllerDelegate {
         self.hidesOnDeactivate = false
 
         setupUI()
-        chatController.delegate = self
+        setupEscMonitor()
+        agentBridge.delegate = self
     }
 
     // MARK: - Positioning
 
     static func sidebarFrame(forTargetBounds cgBounds: CGRect, sidebarWidth: CGFloat) -> NSRect {
-        guard let screen = NSScreen.main else {
+        // CG coords use primary screen as reference — must use screens[0], not .main
+        guard let primaryScreen = NSScreen.screens.first else {
             return NSRect(x: 100, y: 100, width: sidebarWidth, height: 500)
         }
-        let screenHeight = screen.frame.height
+        let screenHeight = primaryScreen.frame.height
         let appKitY = screenHeight - cgBounds.origin.y - cgBounds.height
         return NSRect(
             x: cgBounds.origin.x + cgBounds.width + 4,
@@ -328,9 +333,7 @@ class SidebarWindow: NSPanel, ChatControllerDelegate {
         let text = inputField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         inputField.stringValue = ""
-        Task {
-            await chatController.sendUserMessage(text)
-        }
+        agentBridge.sendUserMessage(text: text)
     }
 
     @objc private func tabChanged() {
@@ -346,10 +349,10 @@ class SidebarWindow: NSPanel, ChatControllerDelegate {
         tabChanged()
     }
 
-    // MARK: - ChatControllerDelegate
+    // MARK: - AgentBridgeDelegate
 
-    func chatControllerDidUpdateMessages(_ controller: ChatController) {
-        let messages = controller.uiMessages
+    func agentBridgeDidUpdateMessages(_ bridge: AgentBridge) {
+        let messages = bridge.uiMessages
         if webViewReady {
             pushMessagesToWebView(messages)
         } else {
@@ -357,9 +360,9 @@ class SidebarWindow: NSPanel, ChatControllerDelegate {
         }
     }
 
-    func chatControllerDidEncounterError(_ controller: ChatController, error: String) {
+    func agentBridgeDidEncounterError(_ bridge: AgentBridge, error: String) {
         let alert = NSAlert()
-        alert.messageText = "Chat Error"
+        alert.messageText = "Agent Error"
         alert.informativeText = error
         alert.alertStyle = .warning
         alert.runModal()
@@ -397,9 +400,36 @@ class SidebarWindow: NSPanel, ChatControllerDelegate {
         webView.evaluateJavaScript("updateMessages('\(escaped)')")
     }
 
+    // MARK: - ESC to Cancel
+
+    private func setupEscMonitor() {
+        escMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            if event.keyCode == 53, let self = self, self.agentBridge.isRunning {
+                self.agentBridge.stop()
+                return nil // consume the event
+            }
+            return event
+        }
+    }
+
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 53 { // ESC key
+            agentBridge.stop()
+            return
+        }
+        super.keyDown(with: event)
+    }
+
+    override var acceptsFirstResponder: Bool { true }
+
     // MARK: - Cleanup
 
     override func close() {
+        agentBridge.stop()
+        if let monitor = escMonitor {
+            NSEvent.removeMonitor(monitor)
+            escMonitor = nil
+        }
         ActiveAppState.shared.debugVisible = false
         InteractableOverlayWindow.shared.hideAll()
         super.close()

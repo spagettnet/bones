@@ -1,64 +1,38 @@
-import Security
 import AppKit
 
+/// Stores the API key in a plain file at ~/.config/bones/api-key.
+/// The keychain ties items to code signatures which break on every rebuild.
 @MainActor
 enum KeychainHelper {
-    private static let service = "com.bones.app"
-    private static let account = "anthropic-api-key"
+    private static var keyFilePath: String {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        return "\(home)/.config/bones/api-key"
+    }
 
     static func getAPIKey() -> String? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-            kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip
-        ]
-
-        var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-
-        guard status == errSecSuccess,
-              let data = result as? Data,
-              let key = String(data: data, encoding: .utf8)
+        guard let data = FileManager.default.contents(atPath: keyFilePath),
+              let key = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !key.isEmpty
         else { return nil }
-
         return key
     }
 
     @discardableResult
     static func setAPIKey(_ key: String) -> Bool {
-        // Delete any existing key first
-        deleteAPIKey()
-
-        guard let data = key.data(using: .utf8) else { return false }
-
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecValueData as String: data
-        ]
-
-        let status = SecItemAdd(query as CFDictionary, nil)
-        return status == errSecSuccess
+        let dir = (keyFilePath as NSString).deletingLastPathComponent
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        return FileManager.default.createFile(atPath: keyFilePath, contents: key.data(using: .utf8))
     }
 
     @discardableResult
     static func deleteAPIKey() -> Bool {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account
-        ]
-        let status = SecItemDelete(query as CFDictionary)
-        return status == errSecSuccess || status == errSecItemNotFound
+        try? FileManager.default.removeItem(atPath: keyFilePath)
+        return true
     }
 
     /// Returns stored key or prompts user. Returns nil if user cancels.
     static func requireAPIKey() -> String? {
-        if let key = getAPIKey(), !key.isEmpty {
+        if let key = getAPIKey() {
             return key
         }
         return promptForAPIKey()
@@ -67,6 +41,20 @@ enum KeychainHelper {
     /// Shows a dialog asking for the API key. Returns nil if cancelled.
     @discardableResult
     static func promptForAPIKey() -> String? {
+        // LSUIElement apps don't get a menu bar, so Cmd+V won't work
+        // unless we provide an Edit menu with paste action.
+        let savedMenu = NSApp.mainMenu
+        let menuBar = NSMenu()
+        let editMenuItem = NSMenuItem()
+        let editMenu = NSMenu(title: "Edit")
+        editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editMenuItem.submenu = editMenu
+        menuBar.addItem(editMenuItem)
+        NSApp.mainMenu = menuBar
+
         let alert = NSAlert()
         alert.messageText = "Anthropic API Key Required"
         alert.informativeText = "Enter your API key to enable AI chat.\nGet one at console.anthropic.com"
@@ -82,6 +70,7 @@ enum KeychainHelper {
         alert.window.initialFirstResponder = input
 
         let response = alert.runModal()
+        NSApp.mainMenu = savedMenu
         guard response == .alertFirstButtonReturn else { return nil }
 
         let key = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)

@@ -122,7 +122,7 @@ enum SkeletonDefinition {
 
 enum SkeletonRenderer {
     /// Pixel size in points for the drag avatar
-    static let px: CGFloat = 3.0
+    static let px: CGFloat = 2.0
 
     // MARK: - Menu Bar Icon (18x18 template, pixel art)
 
@@ -130,45 +130,41 @@ enum SkeletonRenderer {
         let size = NSSize(width: 18, height: 18)
         let image = NSImage(size: size, flipped: true) { _ in
             guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
-            let p: CGFloat = 2.0  // pixel size for menu bar (smaller)
+            let p: CGFloat = 2.0  // pixel size for menu bar
             ctx.setFillColor(NSColor.black.cgColor)
 
-            // Skull (4x4 block, centered)
-            let sx: CGFloat = 5
-            fillPx(ctx, x: sx+1, y: 0, w: 2, h: 1, p: p) // top of skull
-            fillPx(ctx, x: sx, y: 1, w: 4, h: 2, p: p)     // skull body
-            fillPx(ctx, x: sx+1, y: 3, w: 2, h: 1, p: p)   // jaw
+            // Centered skeleton: 9-col grid (0-8), center = 4
+            let cx: CGFloat = 4
 
-            // Eyes (cut out — draw skull then cut)
+            // Skull
+            fillPx(ctx, x: cx - 1, y: 0, w: 3, h: 1, p: p)   // top
+            fillPx(ctx, x: cx - 2, y: 1, w: 5, h: 2, p: p)   // body
+            fillPx(ctx, x: cx - 1, y: 3, w: 3, h: 1, p: p)   // jaw
+
+            // Eyes (cut out)
             ctx.setFillColor(NSColor.white.cgColor)
-            fillPx(ctx, x: sx+0, y: 1, w: 1, h: 1, p: p)   // left eye
-            fillPx(ctx, x: sx+3, y: 1, w: 1, h: 1, p: p)   // right eye
+            fillPx(ctx, x: cx - 1, y: 1, w: 1, h: 1, p: p)
+            fillPx(ctx, x: cx + 1, y: 1, w: 1, h: 1, p: p)
             ctx.setFillColor(NSColor.black.cgColor)
 
             // Spine
-            fillPx(ctx, x: sx+1, y: 4, w: 2, h: 1, p: p)
-            fillPx(ctx, x: sx+1, y: 5, w: 2, h: 1, p: p)
+            fillPx(ctx, x: cx, y: 4, w: 1, h: 1, p: p)
+            fillPx(ctx, x: cx, y: 5, w: 1, h: 1, p: p)
 
             // Ribs
-            fillPx(ctx, x: sx-1, y: 4, w: 1, h: 1, p: p)
-            fillPx(ctx, x: sx+4, y: 4, w: 1, h: 1, p: p)
-            fillPx(ctx, x: sx-1, y: 5, w: 1, h: 1, p: p)
-            fillPx(ctx, x: sx+4, y: 5, w: 1, h: 1, p: p)
-
-            // Arms
-            fillPx(ctx, x: sx-2, y: 5, w: 1, h: 1, p: p)
-            fillPx(ctx, x: sx+5, y: 5, w: 1, h: 1, p: p)
-            fillPx(ctx, x: sx-2, y: 6, w: 1, h: 1, p: p)
-            fillPx(ctx, x: sx+5, y: 6, w: 1, h: 1, p: p)
+            fillPx(ctx, x: cx - 2, y: 4, w: 2, h: 1, p: p)
+            fillPx(ctx, x: cx + 1, y: 4, w: 2, h: 1, p: p)
+            fillPx(ctx, x: cx - 1, y: 5, w: 1, h: 1, p: p)
+            fillPx(ctx, x: cx + 1, y: 5, w: 1, h: 1, p: p)
 
             // Pelvis
-            fillPx(ctx, x: sx, y: 6, w: 4, h: 1, p: p)
+            fillPx(ctx, x: cx - 1, y: 6, w: 3, h: 1, p: p)
 
             // Legs
-            fillPx(ctx, x: sx, y: 7, w: 1, h: 1, p: p)
-            fillPx(ctx, x: sx+3, y: 7, w: 1, h: 1, p: p)
-            fillPx(ctx, x: sx, y: 8, w: 1, h: 1, p: p)
-            fillPx(ctx, x: sx+3, y: 8, w: 1, h: 1, p: p)
+            fillPx(ctx, x: cx - 1, y: 7, w: 1, h: 1, p: p)
+            fillPx(ctx, x: cx + 1, y: 7, w: 1, h: 1, p: p)
+            fillPx(ctx, x: cx - 1, y: 8, w: 1, h: 1, p: p)
+            fillPx(ctx, x: cx + 1, y: 8, w: 1, h: 1, p: p)
 
             return true
         }
@@ -257,7 +253,6 @@ enum SkeletonRenderer {
 
     /// Draw a pixelated line between two points (Bresenham-style, snapped to pixel grid)
     private static func drawPixelLine(_ ctx: CGContext, from: CGPoint, to: CGPoint, width: CGFloat, p: CGFloat) {
-        // Convert points to pixel coordinates
         let x0 = Int((from.x / p).rounded())
         let y0 = Int((from.y / p).rounded())
         let x1 = Int((to.x / p).rounded())
@@ -271,15 +266,15 @@ enum SkeletonRenderer {
 
         var cx = x0, cy = y0
 
-        let hw = Int((width / 2).rounded(.up))
+        let w = max(1, Int(width))
+        let offset = -(w - 1) / 2  // width=1 → offset=0, width=2 → offset=0, width=3 → offset=-1
 
         while true {
-            // Draw a pixel block of the given width
-            for ox in -hw..<(hw + 1) {
-                for oy in -hw..<(hw + 1) {
+            for ox in 0..<w {
+                for oy in 0..<w {
                     ctx.fill(CGRect(
-                        x: CGFloat(cx + ox) * p,
-                        y: CGFloat(cy + oy) * p,
+                        x: CGFloat(cx + offset + ox) * p,
+                        y: CGFloat(cy + offset + oy) * p,
                         width: p, height: p
                     ))
                 }

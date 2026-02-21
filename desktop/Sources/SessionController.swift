@@ -4,10 +4,10 @@ import CoreGraphics
 @MainActor
 class SessionController {
     private var sidebarWindow: SidebarWindow?
-    private var chatController: ChatController?
+    private var agentBridge: AgentBridge?
     private var windowTracker: WindowTracker?
+    private var overlayManager: OverlayManager?
     private var widgetManager: WidgetManager?
-    private var contentChangeDetector: ContentChangeDetector?
 
     func startSession(windowInfo: WindowInfo) async {
         endSession()
@@ -35,7 +35,7 @@ class SessionController {
         // Re-fetch bounds (may have changed after activation)
         let bounds = freshWindowBounds(windowID: windowInfo.windowID) ?? windowInfo.bounds
 
-        // Create components
+        // Create window tracker
         let tracker = WindowTracker(
             windowID: windowInfo.windowID,
             ownerPID: windowInfo.ownerPID,
@@ -43,26 +43,39 @@ class SessionController {
         )
         self.windowTracker = tracker
 
-        let context = TargetContext(
+        // Create overlay manager
+        let overlay = OverlayManager()
+        self.overlayManager = overlay
+
+        // Build execution context
+        let execContext = ToolExecutionContext(
             windowID: windowInfo.windowID,
             ownerPID: windowInfo.ownerPID,
             bounds: bounds,
-            retinaScale: 2.0
+            retinaScale: 2.0,
+            windowTracker: tracker,
+            overlayManager: overlay
         )
 
-        let wm = WidgetManager(windowTracker: tracker, targetContext: context)
+        // Wire overlay bridge handler
+        overlay.onBridgeAction = { [weak self] action, payload, callbackId in
+            guard let self = self else { return }
+            Task { @MainActor in
+                await self.handleBridgeAction(action: action, payload: payload, callbackId: callbackId, context: execContext)
+            }
+        }
+
+        // Create widget manager
+        let wm = WidgetManager(windowTracker: tracker, targetContext: execContext.targetContext)
         self.widgetManager = wm
 
-        let controller = ChatController(
-            apiKey: apiKey,
-            targetContext: context,
-            windowTracker: tracker,
-            widgetManager: wm
-        )
-        self.chatController = controller
+        // Create agent bridge
+        let bridge = AgentBridge(executionContext: execContext, overlayManager: overlay, widgetManager: wm)
+        self.agentBridge = bridge
 
         let sidebar = SidebarWindow(
-            chatController: controller,
+            agentBridge: bridge,
+            windowTracker: tracker,
             targetBounds: bounds
         )
         self.sidebarWindow = sidebar
@@ -80,41 +93,169 @@ class SessionController {
 
         sidebar.makeKeyAndOrderFront(nil)
 
-        // Content change detection — auto-screenshot on navigation
-        let detector = ContentChangeDetector(windowID: windowInfo.windowID)
-        detector.onContentChanged = { [weak controller, weak detector] imageData in
-            guard let controller, let detector else { return }
-            guard !controller.isBusy else {
-                BoneLog.log("ContentChangeDetector: chatController busy, skipping injection")
-                return
-            }
-            detector.pause()
-            Task { @MainActor in
-                await controller.injectContentChange(imageData: imageData)
-                detector.resume()
-            }
-        }
-        self.contentChangeDetector = detector
-
-        await controller.startWithScreenshot()
-
-        detector.start()
+        await bridge.start(apiKey: apiKey)
     }
 
     func endSession() {
-        contentChangeDetector?.stop()
-        contentChangeDetector = nil
-        widgetManager?.dismissAll()
+        agentBridge?.stop()
+        overlayManager?.destroyOverlay()
+        overlayManager = nil
         widgetManager = nil
         sidebarWindow?.close()
         sidebarWindow = nil
         windowTracker?.stopTracking()
         windowTracker = nil
-        chatController = nil
+        agentBridge = nil
     }
 
     func toggleDebugTab() {
         sidebarWindow?.toggleDebugTab()
+    }
+
+    // MARK: - Bridge Action Handler (for overlay window.bones.* API)
+
+    private func handleBridgeAction(action: String, payload: [String: Any], callbackId: String, context: ToolExecutionContext) async {
+        guard let overlay = overlayManager else { return }
+
+        switch action {
+        case "click":
+            let x = payload["x"] as? Int ?? 0
+            let y = payload["y"] as? Int ?? 0
+            let result = await InteractionTools.click(x: x, y: y, context: context.targetContext)
+            overlay.sendBridgeResponse(callbackId: callbackId, result: ["success": result.success, "message": result.message])
+
+        case "type_text":
+            let text = payload["text"] as? String ?? ""
+            let result = await InteractionTools.typeText(text, context: context.targetContext)
+            overlay.sendBridgeResponse(callbackId: callbackId, result: ["success": result.success, "message": result.message])
+
+        case "scroll":
+            let x = payload["x"] as? Int ?? 0
+            let y = payload["y"] as? Int ?? 0
+            let direction = payload["direction"] as? String ?? "down"
+            let amount = payload["amount"] as? Int ?? 3
+            let result = await InteractionTools.scroll(x: x, y: y, direction: direction, amount: amount, context: context.targetContext)
+            overlay.sendBridgeResponse(callbackId: callbackId, result: ["success": result.success, "message": result.message])
+
+        case "take_screenshot":
+            if let imageData = await ScreenshotCapture.captureToData(windowID: context.windowID) {
+                let base64 = imageData.base64EncodedString()
+                overlay.sendBridgeResponse(callbackId: callbackId, result: ["image": "data:image/png;base64,\(base64)"])
+            } else {
+                overlay.sendBridgeError(callbackId: callbackId, error: "Screenshot failed")
+            }
+
+        case "get_tree":
+            if let tree = ActiveAppState.shared.contextTree {
+                let json = tree.toJSON()
+                overlay.sendBridgeResponse(callbackId: callbackId, result: json)
+            } else {
+                overlay.sendBridgeResponse(callbackId: callbackId, result: [:] as [String: Any])
+            }
+
+        case "get_buttons":
+            let buttons = ActiveAppState.shared.buttons.map { node -> [String: Any] in
+                var item: [String: Any] = ["role": node.role]
+                item["label"] = node.title ?? node.description ?? node.roleDescription
+                if let f = node.frame {
+                    item["frame"] = ["x": f.origin.x, "y": f.origin.y, "w": f.width, "h": f.height]
+                }
+                return item
+            }
+            overlay.sendBridgeResponse(callbackId: callbackId, result: buttons)
+
+        case "get_input_fields":
+            let inputs = ActiveAppState.shared.inputFields.map { node -> [String: Any] in
+                var item: [String: Any] = ["role": node.role]
+                item["label"] = node.title ?? node.description ?? node.roleDescription
+                item["value"] = node.value
+                if let f = node.frame {
+                    item["frame"] = ["x": f.origin.x, "y": f.origin.y, "w": f.width, "h": f.height]
+                }
+                return item
+            }
+            overlay.sendBridgeResponse(callbackId: callbackId, result: inputs)
+
+        case "get_elements":
+            let buttons = ActiveAppState.shared.buttons.map { node -> [String: Any] in
+                var item: [String: Any] = ["role": node.role, "type": "button"]
+                item["label"] = node.title ?? node.description ?? node.roleDescription
+                if let f = node.frame {
+                    item["frame"] = ["x": f.origin.x, "y": f.origin.y, "w": f.width, "h": f.height]
+                }
+                return item
+            }
+            let inputs = ActiveAppState.shared.inputFields.map { node -> [String: Any] in
+                var item: [String: Any] = ["role": node.role, "type": "input"]
+                item["label"] = node.title ?? node.description ?? node.roleDescription
+                item["value"] = node.value
+                if let f = node.frame {
+                    item["frame"] = ["x": f.origin.x, "y": f.origin.y, "w": f.width, "h": f.height]
+                }
+                return item
+            }
+            overlay.sendBridgeResponse(callbackId: callbackId, result: buttons + inputs)
+
+        case "click_element":
+            let label = payload["label"] as? String ?? ""
+            if let element = findElementByLabel(label, in: ActiveAppState.shared.buttons),
+               let frame = element.frame {
+                let centerX = Int((frame.origin.x - context.bounds.origin.x) * context.retinaScale + frame.width * context.retinaScale / 2)
+                let centerY = Int((frame.origin.y - context.bounds.origin.y) * context.retinaScale + frame.height * context.retinaScale / 2)
+                let result = await InteractionTools.click(x: centerX, y: centerY, context: context.targetContext)
+                overlay.sendBridgeResponse(callbackId: callbackId, result: ["success": result.success, "message": result.message])
+            } else {
+                overlay.sendBridgeError(callbackId: callbackId, error: "Element with label '\(label)' not found")
+            }
+
+        case "type_into_field":
+            let label = payload["label"] as? String ?? ""
+            let text = payload["text"] as? String ?? ""
+            if let element = findElementByLabel(label, in: ActiveAppState.shared.inputFields),
+               let frame = element.frame {
+                let centerX = Int((frame.origin.x - context.bounds.origin.x) * context.retinaScale + frame.width * context.retinaScale / 2)
+                let centerY = Int((frame.origin.y - context.bounds.origin.y) * context.retinaScale + frame.height * context.retinaScale / 2)
+                _ = await InteractionTools.click(x: centerX, y: centerY, context: context.targetContext)
+                let result = await InteractionTools.typeText(text, context: context.targetContext)
+                overlay.sendBridgeResponse(callbackId: callbackId, result: ["success": result.success, "message": result.message])
+            } else {
+                overlay.sendBridgeError(callbackId: callbackId, error: "Input field with label '\(label)' not found")
+            }
+
+        case "click_code":
+            let code = payload["code"] as? String ?? ""
+            guard let elem = ElementLabeler.shared.element(forCode: code) else {
+                overlay.sendBridgeError(callbackId: callbackId, error: "No element with code '\(code)'")
+                return
+            }
+            let label = elem.node.bestLabel ?? ""
+            let ctx = context.targetContext
+            if !label.isEmpty && AccessibilityHelper.pressElement(query: label, pid: ctx.ownerPID, windowBounds: ctx.bounds) {
+                overlay.sendBridgeResponse(callbackId: callbackId, result: ["success": true, "message": "Pressed [\(code)] via accessibility"])
+            } else {
+                let frame = elem.screenFrame
+                let centerX = Int((frame.origin.x - ctx.bounds.origin.x + frame.width / 2) * ctx.retinaScale)
+                let centerY = Int((frame.origin.y - ctx.bounds.origin.y + frame.height / 2) * ctx.retinaScale)
+                let result = await InteractionTools.click(x: centerX, y: centerY, context: ctx)
+                overlay.sendBridgeResponse(callbackId: callbackId, result: ["success": result.success, "message": result.message])
+            }
+
+        case "key_combo":
+            let keys = payload["keys"] as? [String] ?? []
+            let result = await InteractionTools.keyCombo(keys: keys, context: context.targetContext)
+            overlay.sendBridgeResponse(callbackId: callbackId, result: ["success": result.success, "message": result.message])
+
+        default:
+            overlay.sendBridgeError(callbackId: callbackId, error: "Unknown bridge action: \(action)")
+        }
+    }
+
+    private func findElementByLabel(_ label: String, in elements: [AXElementNode]) -> AXElementNode? {
+        let lowered = label.lowercased()
+        return elements.first { node in
+            let nodeLabel = node.title ?? node.description ?? node.roleDescription ?? ""
+            return nodeLabel.lowercased() == lowered || nodeLabel.lowercased().contains(lowered)
+        }
     }
 
     private func freshWindowBounds(windowID: CGWindowID) -> CGRect? {
