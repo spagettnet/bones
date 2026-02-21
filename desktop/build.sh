@@ -8,6 +8,10 @@ CONTENTS="${APP_BUNDLE}/Contents"
 MACOS="${CONTENTS}/MacOS"
 RESOURCES="${CONTENTS}/Resources"
 
+echo "==> Killing existing Bones process..."
+pkill -x Bones 2>/dev/null || true
+sleep 0.5
+
 echo "==> Cleaning previous build..."
 rm -rf "${BUILD_DIR}"
 
@@ -21,14 +25,19 @@ swiftc \
     -framework ScreenCaptureKit \
     -framework CoreGraphics \
     -framework ApplicationServices \
+    -framework QuartzCore \
+    -framework AVFoundation \
+    -framework Security \
     -O \
     Sources/main.swift \
     Sources/AppDelegate.swift \
     Sources/StatusBarController.swift \
+    Sources/SessionController.swift \
     Sources/DragController.swift \
     Sources/DragWindow.swift \
     Sources/HighlightWindow.swift \
     Sources/WindowDetector.swift \
+    Sources/WindowTracker.swift \
     Sources/ScreenshotCapture.swift \
     Sources/LittleGuyRenderer.swift \
     Sources/FeedbackWindow.swift \
@@ -37,12 +46,23 @@ swiftc \
     Sources/DebugPanelWindow.swift \
     Sources/AccessibilityHelper.swift \
     Sources/InteractableOverlayWindow.swift
+    Sources/SkeletonRenderer.swift \
+    Sources/SkeletonPhysics.swift \
+    Sources/BoneSoundEngine.swift \
+    Sources/BoneBreakAnimation.swift \
+    Sources/DogAnimation.swift \
+    Sources/FeedbackWindow.swift \
+    Sources/SidebarWindow.swift \
+    Sources/ChatController.swift \
+    Sources/AnthropicClient.swift \
+    Sources/KeychainHelper.swift \
+    Sources/InteractionTools.swift
 
 echo "==> Copying Info.plist..."
 cp Info.plist "${CONTENTS}/Info.plist"
 
-echo "==> Ad-hoc signing..."
-codesign --sign - --force "${APP_BUNDLE}"
+echo "==> Signing with Bones Dev certificate..."
+codesign --sign "Bones Dev" --force "${APP_BUNDLE}"
 
 echo "==> Build complete: ${APP_BUNDLE}"
 echo "    Run with: open ${APP_BUNDLE}"
