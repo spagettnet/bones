@@ -101,7 +101,7 @@ class AnthropicClient {
     private let apiVersion = "2023-06-01"
     private var apiKey: String
 
-    init(apiKey: String, model: String = "claude-sonnet-4-5-20250929", maxTokens: Int = 4096) {
+    init(apiKey: String, model: String = "claude-opus-4-6", maxTokens: Int = 4096) {
         self.apiKey = apiKey
         self.model = model
         self.maxTokens = maxTokens
