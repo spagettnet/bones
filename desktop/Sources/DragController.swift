@@ -107,7 +107,13 @@ class DragController {
         currentTargetWindowID = nil
         currentTargetInfo = nil
 
-        // Play break animation, then start session
+        // Start session immediately (concurrent with animation)
+        Task { @MainActor in
+            BoneLog.log("DragController: starting session concurrently with animation")
+            await self.sessionController?.startSession(windowInfo: windowInfo)
+        }
+
+        // Play break animation concurrently
         let animation = BoneBreakAnimation()
         self.breakAnimation = animation
 
@@ -118,11 +124,8 @@ class DragController {
             targetWindowInfo: windowInfo,
             dropPoint: dropPoint
         ) { [weak self] in
-            BoneLog.log("DragController: break animation complete, starting session")
+            BoneLog.log("DragController: break animation complete")
             self?.breakAnimation = nil
-            Task { @MainActor in
-                await self?.sessionController?.startSession(windowInfo: windowInfo)
-            }
         }
     }
 

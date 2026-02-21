@@ -3,11 +3,18 @@ import AppKit
 
 // MARK: - UI Message Model
 
+struct ChatOption {
+    let label: String
+    let value: String
+}
+
 struct ChatMessageUI {
     let id: UUID
     let role: MessageRole
     var text: String
     var isStreaming: Bool
+    var isStatus: Bool = false
+    var options: [ChatOption]? = nil
     var visualizationHTML: String? = nil
     var visualizationTitle: String? = nil
 }

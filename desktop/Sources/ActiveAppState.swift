@@ -10,6 +10,7 @@ class ActiveAppState {
     var windowBounds: CGRect = .zero
     var screenshots: [(filename: String, date: Date)] = []
     var ownerPID: pid_t = 0
+    var pageURL: String = ""
 
     // Context tracking
     var mouseLocation: CGPoint = .zero
@@ -63,6 +64,7 @@ class ActiveAppState {
         windowTitle = nil
         windowBounds = .zero
         ownerPID = 0
+        pageURL = ""
         screenshots = []
         mouseLocation = .zero
         isFocused = false

@@ -239,6 +239,51 @@ enum SkeletonRenderer {
         }
     }
 
+    // MARK: - Outline Rendering
+
+    /// Renders `drawContent` into an offscreen buffer, creates a black silhouette,
+    /// draws it shifted in 8 directions for an outline, then draws the original on top.
+    static func drawWithOutline(in ctx: CGContext, size: CGSize, offset: CGFloat = 1.5, _ drawContent: (CGContext) -> Void) {
+        let w = Int(size.width), h = Int(size.height)
+        guard w > 0, h > 0 else { return }
+
+        let cs = CGColorSpaceCreateDeviceRGB()
+        let bitmapInfo = CGImageAlphaInfo.premultipliedLast.rawValue
+
+        // Render content into offscreen buffer
+        guard let buf = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8,
+                                  bytesPerRow: 0, space: cs, bitmapInfo: bitmapInfo) else {
+            drawContent(ctx)
+            return
+        }
+        drawContent(buf)
+        guard let img = buf.makeImage() else { drawContent(ctx); return }
+
+        // Create black silhouette: draw image then fill with black using sourceIn
+        guard let silCtx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8,
+                                     bytesPerRow: 0, space: cs, bitmapInfo: bitmapInfo) else {
+            ctx.draw(img, in: CGRect(x: 0, y: 0, width: w, height: h))
+            return
+        }
+        let r = CGRect(x: 0, y: 0, width: CGFloat(w), height: CGFloat(h))
+        silCtx.draw(img, in: r)
+        silCtx.setBlendMode(.sourceIn)
+        silCtx.setFillColor(CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 1))
+        silCtx.fill(r)
+        guard let silImg = silCtx.makeImage() else { ctx.draw(img, in: r); return }
+
+        // Draw silhouette shifted in 8 directions for outline
+        for dx: CGFloat in [-offset, 0, offset] {
+            for dy: CGFloat in [-offset, 0, offset] {
+                if dx == 0 && dy == 0 { continue }
+                ctx.draw(silImg, in: CGRect(x: dx, y: dy, width: CGFloat(w), height: CGFloat(h)))
+            }
+        }
+
+        // Draw original on top
+        ctx.draw(img, in: r)
+    }
+
     // MARK: - Pixel drawing helpers
 
     /// Fill a rectangle of pixel-grid cells
@@ -341,10 +386,15 @@ enum SkeletonRenderer {
     }
 
     static func boneImage(for boneID: BoneID) -> NSImage {
-        let size = spriteSize(for: boneID)
-        return NSImage(size: size, flipped: false) { _ in
+        let spriteSize = spriteSize(for: boneID)
+        let pad: CGFloat = 4  // room for outline
+        let imgSize = NSSize(width: spriteSize.width + pad * 2, height: spriteSize.height + pad * 2)
+        return NSImage(size: imgSize, flipped: false) { _ in
             guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
-            SkeletonRenderer.drawBoneSprite(boneID: boneID, in: ctx, size: size)
+            ctx.translateBy(x: pad, y: pad)
+            SkeletonRenderer.drawWithOutline(in: ctx, size: spriteSize) { buf in
+                SkeletonRenderer.drawBoneSprite(boneID: boneID, in: buf, size: spriteSize)
+            }
             return true
         }
     }

@@ -16,6 +16,8 @@ class AgentBridge {
     weak var delegate: AgentBridgeDelegate?
     private(set) var uiMessages: [ChatMessageUI] = []
     private(set) var isRunning = false
+    private var statusText: String?  // transient status shown in streaming bubble
+    private var streamingHasRealText = false  // true once a text_delta arrives for current stream
 
     private var process: Process?
     private var stdinPipe: Pipe?
@@ -58,6 +60,7 @@ class AgentBridge {
                 js: "window.location.href", appName: appName)
             if urlResult.success && !urlResult.message.isEmpty {
                 pageURL = urlResult.message
+                ActiveAppState.shared.pageURL = pageURL
                 siteApps = SiteAppRegistry.shared.appsForURL(pageURL).map { app in
                     ["id": app.id, "name": app.name, "description": app.description] as [String: Any]
                 }
@@ -107,24 +110,17 @@ class AgentBridge {
         isRunning = true
         BoneLog.log("AgentBridge: python process launched (pid \(proc.processIdentifier))")
 
-        // Add initial UI message
-        uiMessages.append(ChatMessageUI(
-            id: UUID(), role: .user,
-            text: "[Screenshot sent] What do you see?",
-            isStreaming: false
-        ))
-        delegate?.agentBridgeDidUpdateMessages(self)
-
         // Start reading stdout
         startReading()
 
         // Start reading stderr for logging
         startStderrReading()
 
-        // Send init message
+        // Send init message to Python (sets up API key + screenshot context, but doesn't auto-trigger Claude)
         var initMsg: [String: Any] = [
             "type": "init",
             "api_key": apiKey,
+            "model": ModelSetting.shared.currentModelID,
             "screenshot_base64": screenshotBase64,
             "screenshot_media_type": screenshotMediaType,
             "element_codes": elementCodes
@@ -135,7 +131,32 @@ class AgentBridge {
         if !siteApps.isEmpty {
             initMsg["site_apps"] = siteApps
         }
+        let savedOverlays = SavedOverlayStore.shared.list()
+        if !savedOverlays.isEmpty {
+            initMsg["saved_overlays"] = savedOverlays.map { overlay in
+                [
+                    "id": overlay.id,
+                    "name": overlay.name,
+                    "description": overlay.description
+                ] as [String: Any]
+            }
+        }
         sendToProcess(initMsg)
+
+        // Show status while Python generates contextual suggestions
+        uiMessages.append(ChatMessageUI(
+            id: UUID(), role: .assistant,
+            text: "Taking a look...",
+            isStreaming: true,
+            isStatus: true
+        ))
+        delegate?.agentBridgeDidUpdateMessages(self)
+    }
+
+    func sendModelUpdate(_ modelID: String) {
+        guard isRunning else { return }
+        sendToProcess(["type": "set_model", "model": modelID])
+        BoneLog.log("AgentBridge: sent model update to \(modelID)")
     }
 
     func sendUserMessage(text: String) {
@@ -280,15 +301,63 @@ class AgentBridge {
         guard let type = msg["type"] as? String else { return }
 
         switch type {
+        case "suggestions":
+            // Replace the status placeholder with contextual options
+            if let suggestions = msg["suggestions"] as? [[String: String]] {
+                // Remove the "Taking a look..." status message
+                if let lastIdx = uiMessages.indices.last(where: { uiMessages[$0].isStatus }) {
+                    uiMessages.remove(at: lastIdx)
+                }
+                var options: [ChatOption] = []
+                // Add saved overlay options first
+                let savedOverlays = SavedOverlayStore.shared.list()
+                for overlay in savedOverlays {
+                    options.append(ChatOption(
+                        label: "Load \(overlay.name)",
+                        value: "Load my saved overlay called \"\(overlay.name)\" (id: \(overlay.id))"
+                    ))
+                }
+                for s in suggestions {
+                    if let label = s["label"], let value = s["value"] {
+                        options.append(ChatOption(label: label, value: value))
+                    }
+                }
+                let greeting = msg["greeting"] as? String ?? "What would you like to do?"
+                uiMessages.append(ChatMessageUI(
+                    id: UUID(), role: .assistant,
+                    text: greeting,
+                    isStreaming: false,
+                    options: options
+                ))
+                delegate?.agentBridgeDidUpdateMessages(self)
+            }
+
         case "streaming_start":
             // Add streaming placeholder
+            streamingHasRealText = false
             uiMessages.append(ChatMessageUI(
                 id: UUID(), role: .assistant, text: "", isStreaming: true
             ))
             delegate?.agentBridgeDidUpdateMessages(self)
 
+        case "status":
+            // Only show status in the bubble if no real text has arrived yet
+            if let text = msg["text"] as? String, let lastIdx = lastStreamingIndex(), !streamingHasRealText {
+                statusText = text
+                uiMessages[lastIdx].text = text
+                uiMessages[lastIdx].isStatus = true
+                delegate?.agentBridgeDidUpdateMessages(self)
+            }
+
         case "text_delta":
             if let text = msg["text"] as? String, let lastIdx = lastStreamingIndex() {
+                // Clear status text on first real text delta
+                if !streamingHasRealText && uiMessages[lastIdx].isStatus {
+                    uiMessages[lastIdx].text = ""
+                    uiMessages[lastIdx].isStatus = false
+                    statusText = nil
+                }
+                streamingHasRealText = true
                 uiMessages[lastIdx].text += text
                 delegate?.agentBridgeDidUpdateMessages(self)
             }
@@ -296,6 +365,13 @@ class AgentBridge {
         case "streaming_end":
             if let lastIdx = lastStreamingIndex() {
                 uiMessages[lastIdx].isStreaming = false
+                uiMessages[lastIdx].isStatus = false
+                statusText = nil
+                // Remove only if no real text was ever written (was status-only or empty)
+                if !streamingHasRealText {
+                    uiMessages.remove(at: lastIdx)
+                }
+                streamingHasRealText = false
                 delegate?.agentBridgeDidUpdateMessages(self)
             }
 
@@ -522,6 +598,60 @@ class AgentBridge {
             let pageURL = input["url"] as? String ?? ""
             let result = await SiteAppRegistry.shared.launch(appId: appId, pageURL: pageURL)
             return toolResult(id: id, text: result.message, isError: !result.success)
+
+        case "save_overlay":
+            guard let overlayId = input["id"] as? String, !overlayId.isEmpty else {
+                return toolResult(id: id, text: "Missing 'id' parameter", isError: true)
+            }
+            guard let html = input["html"] as? String, !html.isEmpty else {
+                return toolResult(id: id, text: "Missing 'html' parameter", isError: true)
+            }
+            let overlayName = input["name"] as? String ?? overlayId
+            let desc = input["description"] as? String ?? ""
+            let width = input["width"] as? Int ?? 400
+            let height = input["height"] as? Int ?? 300
+            let position = input["position"] as? String
+            let saveResult = SavedOverlayStore.shared.save(
+                id: overlayId, name: overlayName, description: desc,
+                html: html, width: width, height: height, position: position)
+            if saveResult.success {
+                overlayManager?.createOverlay(
+                    html: html, width: CGFloat(width), height: CGFloat(height), position: position)
+            }
+            return toolResult(id: id, text: saveResult.message, isError: !saveResult.success)
+
+        case "read_overlay_source":
+            guard let overlayId = input["id"] as? String, !overlayId.isEmpty else {
+                return toolResult(id: id, text: "Missing 'id' parameter", isError: true)
+            }
+            guard let overlay = SavedOverlayStore.shared.load(id: overlayId) else {
+                return toolResult(id: id, text: "No saved overlay with id '\(overlayId)' found", isError: true)
+            }
+            return toolResult(id: id, text: overlay.html, isError: false)
+
+        case "list_saved_overlays":
+            let overlays = SavedOverlayStore.shared.list()
+            if overlays.isEmpty {
+                return toolResult(id: id, text: "No saved overlays for this app/site.", isError: false)
+            }
+            let lines = overlays.map { o in
+                "- \(o.name) (id: \(o.id)): \(o.description)"
+            }
+            return toolResult(id: id, text: "Saved overlays:\n" + lines.joined(separator: "\n"), isError: false)
+
+        case "load_overlay":
+            guard let overlayId = input["id"] as? String, !overlayId.isEmpty else {
+                return toolResult(id: id, text: "Missing 'id' parameter", isError: true)
+            }
+            guard let overlay = SavedOverlayStore.shared.load(id: overlayId) else {
+                return toolResult(id: id, text: "No saved overlay with id '\(overlayId)' found", isError: true)
+            }
+            overlayManager?.createOverlay(
+                html: overlay.html,
+                width: CGFloat(overlay.width),
+                height: CGFloat(overlay.height),
+                position: overlay.position)
+            return toolResult(id: id, text: "Loaded overlay '\(overlay.name)' (\(overlay.width)x\(overlay.height))", isError: false)
 
         default:
             return toolResult(id: id, text: "Unknown tool: \(name)", isError: true)

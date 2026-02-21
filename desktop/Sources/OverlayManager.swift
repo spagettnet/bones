@@ -3,6 +3,7 @@ import AppKit
 @MainActor
 class OverlayManager {
     private var overlayWindow: OverlayUIWindow?
+    private(set) var currentHTML: String?
     var onBridgeAction: ((_ action: String, _ payload: [String: Any], _ callbackId: String) -> Void)?
 
     func createOverlay(html: String, width: CGFloat, height: CGFloat, position: String?) {
@@ -47,12 +48,14 @@ class OverlayManager {
 
         window.makeKeyAndOrderFront(nil)
         window.loadHTML(html)
+        currentHTML = html
         BoneLog.log("OverlayManager: created overlay \(Int(width))x\(Int(height))")
     }
 
     func updateOverlay(html: String) {
         guard let window = overlayWindow else { return }
         window.loadHTML(html)
+        currentHTML = html
         BoneLog.log("OverlayManager: updated overlay with new HTML")
     }
 
@@ -66,6 +69,7 @@ class OverlayManager {
         guard let window = overlayWindow else { return }
         window.close()
         overlayWindow = nil
+        currentHTML = nil
         BoneLog.log("OverlayManager: destroyed overlay")
     }
 

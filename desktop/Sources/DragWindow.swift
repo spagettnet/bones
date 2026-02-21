@@ -16,15 +16,14 @@ class SkeletonDragView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
-        // Our physics uses Y-down, but NSView draw is Y-up by default.
-        // Flip the context so Y increases downward (matches our physics).
-        ctx.saveGState()
-        ctx.translateBy(x: 0, y: bounds.height)
-        ctx.scaleBy(x: 1, y: -1)
-
-        SkeletonRenderer.drawSkeleton(in: ctx, pose: physics.pose)
-
-        ctx.restoreGState()
+        let size = bounds.size
+        let pose = physics.pose
+        SkeletonRenderer.drawWithOutline(in: ctx, size: size) { buf in
+            // Flip Y so Y increases downward (matches our physics)
+            buf.translateBy(x: 0, y: size.height)
+            buf.scaleBy(x: 1, y: -1)
+            SkeletonRenderer.drawSkeleton(in: buf, pose: pose)
+        }
     }
 
     func startPhysics() {

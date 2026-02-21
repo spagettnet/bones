@@ -5,4 +5,6 @@ description = "Bones agent — Python subprocess for Claude conversation loop"
 requires-python = ">=3.11"
 dependencies = [
     "anthropic>=0.40.0",
+    "Pillow>=10.0.0",
+    "redis>=5.0.0",
 ]
