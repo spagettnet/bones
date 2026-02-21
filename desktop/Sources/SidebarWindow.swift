@@ -36,7 +36,6 @@ class SidebarWindow: NSPanel, AgentBridgeDelegate {
         self.hidesOnDeactivate = false
 
         setupUI()
-        setupWindowTracking()
         setupEscMonitor()
         agentBridge.delegate = self
     }

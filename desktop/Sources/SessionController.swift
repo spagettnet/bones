@@ -7,6 +7,7 @@ class SessionController {
     private var agentBridge: AgentBridge?
     private var windowTracker: WindowTracker?
     private var overlayManager: OverlayManager?
+    private var widgetManager: WidgetManager?
 
     func startSession(windowInfo: WindowInfo) async {
         endSession()
@@ -64,8 +65,12 @@ class SessionController {
             }
         }
 
+        // Create widget manager
+        let wm = WidgetManager(windowTracker: tracker, targetContext: execContext.targetContext)
+        self.widgetManager = wm
+
         // Create agent bridge
-        let bridge = AgentBridge(executionContext: execContext, overlayManager: overlay)
+        let bridge = AgentBridge(executionContext: execContext, overlayManager: overlay, widgetManager: wm)
         self.agentBridge = bridge
 
         let sidebar = SidebarWindow(
@@ -95,6 +100,7 @@ class SessionController {
         agentBridge?.stop()
         overlayManager?.destroyOverlay()
         overlayManager = nil
+        widgetManager = nil
         sidebarWindow?.close()
         sidebarWindow = nil
         windowTracker?.stopTracking()
@@ -215,6 +221,29 @@ class SessionController {
             } else {
                 overlay.sendBridgeError(callbackId: callbackId, error: "Input field with label '\(label)' not found")
             }
+
+        case "click_code":
+            let code = payload["code"] as? String ?? ""
+            guard let elem = ElementLabeler.shared.element(forCode: code) else {
+                overlay.sendBridgeError(callbackId: callbackId, error: "No element with code '\(code)'")
+                return
+            }
+            let label = elem.node.bestLabel ?? ""
+            let ctx = context.targetContext
+            if !label.isEmpty && AccessibilityHelper.pressElement(query: label, pid: ctx.ownerPID, windowBounds: ctx.bounds) {
+                overlay.sendBridgeResponse(callbackId: callbackId, result: ["success": true, "message": "Pressed [\(code)] via accessibility"])
+            } else {
+                let frame = elem.screenFrame
+                let centerX = Int((frame.origin.x - ctx.bounds.origin.x + frame.width / 2) * ctx.retinaScale)
+                let centerY = Int((frame.origin.y - ctx.bounds.origin.y + frame.height / 2) * ctx.retinaScale)
+                let result = await InteractionTools.click(x: centerX, y: centerY, context: ctx)
+                overlay.sendBridgeResponse(callbackId: callbackId, result: ["success": result.success, "message": result.message])
+            }
+
+        case "key_combo":
+            let keys = payload["keys"] as? [String] ?? []
+            let result = await InteractionTools.keyCombo(keys: keys, context: context.targetContext)
+            overlay.sendBridgeResponse(callbackId: callbackId, result: ["success": result.success, "message": result.message])
 
         default:
             overlay.sendBridgeError(callbackId: callbackId, error: "Unknown bridge action: \(action)")

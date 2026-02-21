@@ -174,6 +174,48 @@ enum InteractionTools {
         return map[name]
     }
 
+    /// Execute JavaScript in the frontmost browser tab via AppleScript.
+    /// Works with Safari, Chrome, Arc, and other Chromium browsers.
+    static func runJavaScriptInBrowser(js: String, appName: String) async -> ToolResult {
+        let escaped = js
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+            .replacingOccurrences(of: "\n", with: "\\n")
+            .replacingOccurrences(of: "\r", with: "\\r")
+
+        let script: String
+        let lowerName = appName.lowercased()
+
+        if lowerName.contains("safari") {
+            script = """
+            tell application "Safari"
+                do JavaScript "\(escaped)" in front document
+            end tell
+            """
+        } else if lowerName.contains("chrome") || lowerName.contains("chromium") || lowerName.contains("arc") || lowerName.contains("brave") || lowerName.contains("edge") || lowerName.contains("vivaldi") {
+            let chromeAppName = appName
+            script = """
+            tell application "\(chromeAppName)"
+                execute front window's active tab javascript "\(escaped)"
+            end tell
+            """
+        } else {
+            return ToolResult(success: false, message: "Unsupported browser: \(appName). Supported: Safari, Chrome, Arc, Brave, Edge.")
+        }
+
+        let appleScript = NSAppleScript(source: script)
+        var errorInfo: NSDictionary?
+        let result = appleScript?.executeAndReturnError(&errorInfo)
+
+        if let error = errorInfo {
+            let message = error[NSAppleScript.errorMessage] as? String ?? "AppleScript error"
+            return ToolResult(success: false, message: "JS execution failed: \(message)")
+        }
+
+        let output = result?.stringValue ?? ""
+        return ToolResult(success: true, message: output)
+    }
+
     static func checkAccessibilityPermission() -> Bool {
         return AXIsProcessTrusted()
     }

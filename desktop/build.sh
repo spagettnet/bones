@@ -79,7 +79,15 @@ swiftc \
     Sources/Tools/CreateOverlayTool.swift \
     Sources/Tools/UpdateOverlayTool.swift \
     Sources/Tools/DestroyOverlayTool.swift \
-    Sources/Tools/KeyComboTool.swift
+    Sources/Tools/KeyComboTool.swift \
+    Sources/WidgetManager.swift \
+    Sources/WidgetWindow.swift \
+    Sources/WidgetContentProvider.swift \
+    Sources/ContentChangeDetector.swift \
+    Sources/ColorSwatchWidget.swift \
+    Sources/CodeSnippetWidget.swift \
+    Sources/CustomHTMLWidget.swift \
+    Sources/JSONViewerWidget.swift
 
 echo "==> Copying Info.plist..."
 cp Info.plist "${CONTENTS}/Info.plist"

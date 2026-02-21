@@ -174,6 +174,12 @@ class OverlayUIWindow: NSPanel, WKScriptMessageHandler {
             },
             typeIntoField: function(label, text) {
                 return callBridge('type_into_field', { label: label, text: text });
+            },
+            clickCode: function(code) {
+                return callBridge('click_code', { code: code });
+            },
+            keyCombo: function(keys) {
+                return callBridge('key_combo', { keys: keys });
             }
         };
     })();

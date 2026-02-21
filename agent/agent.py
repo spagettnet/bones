@@ -234,6 +234,94 @@ NATIVE_TOOLS = [
             "required": []
         }
     },
+    {
+        "name": "show_widget",
+        "description": (
+            "Show a floating widget panel at a position on the target window. "
+            "Use to display contextual information like color swatches, JSON viewers, "
+            "code snippets, or custom HTML widgets."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "widget_id": {"type": "string", "description": "Unique ID for this widget"},
+                "type": {
+                    "type": "string",
+                    "description": "Widget type",
+                    "enum": ["color_swatch", "json_viewer", "code_snippet", "custom_html"]
+                },
+                "x": {"type": "integer", "description": "X position in image pixels (2x retina)"},
+                "y": {"type": "integer", "description": "Y position in image pixels (2x retina)"},
+                "title": {"type": "string", "description": "Title for the widget window"},
+                "config": {
+                    "type": "object",
+                    "description": (
+                        "Widget config. color_swatch: {color: '#hex'}. json_viewer: {json: '{...}'}. "
+                        "code_snippet: {code: '...', language: 'swift'}. custom_html: {html: '<div>...</div>', width: 300, height: 200}."
+                    )
+                }
+            },
+            "required": ["widget_id", "type", "x", "y", "title", "config"]
+        }
+    },
+    {
+        "name": "dismiss_widget",
+        "description": "Dismiss a floating widget panel. Use widget_id='all' to dismiss all widgets.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "widget_id": {"type": "string", "description": "ID of widget to dismiss, or 'all'"}
+            },
+            "required": ["widget_id"]
+        }
+    },
+    {
+        "name": "read_editor_content",
+        "description": (
+            "Read the full text content from the focused text area or code editor in the target window. "
+            "Returns the complete file/document text, not just what's visible on screen."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+    },
+    {
+        "name": "run_javascript",
+        "description": (
+            "Execute JavaScript in the target browser's active tab and return the result. "
+            "Works with Safari, Chrome, Arc, Brave, Edge. Use this to read page HTML "
+            "(document.documentElement.outerHTML), get URLs (document.querySelectorAll('a')), "
+            "interact with the DOM, or extract data from web pages. "
+            "The JS expression should return a string value."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "javascript": {
+                    "type": "string",
+                    "description": "JavaScript code to execute in the browser tab"
+                }
+            },
+            "required": ["javascript"]
+        }
+    },
+    {
+        "name": "visualize",
+        "description": (
+            "Render an interactive HTML visualization in the chat sidebar. "
+            "Use to show visual representations of UI components, mockups, diagrams, etc."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "html": {"type": "string", "description": "Complete HTML content to render"},
+                "title": {"type": "string", "description": "Label shown above the visualization"}
+            },
+            "required": ["html"]
+        }
+    },
 ]
 
 SYSTEM_PROMPT = """\
@@ -248,9 +336,17 @@ HOW TO INTERACT:
 5. find_elements(query) → search for elements when codes aren't visible
 6. get_elements → see the full element code map
 
+BROWSER TOOLS (when target is a web browser):
+6. run_javascript(javascript) → execute JS in the browser tab, get results back
+   - Read HTML: run_javascript("document.documentElement.outerHTML")
+   - Get all links: run_javascript("JSON.stringify([...document.querySelectorAll('a')].map(a=>({text:a.textContent.trim(),href:a.href})).filter(a=>a.href&&a.text))")
+   - Click by selector: run_javascript("document.querySelector('.my-button').click()")
+   - Navigate: run_javascript("window.location.href = 'https://...'")
+
 RULES:
 - ALWAYS take a labeled screenshot first to see available element codes.
 - ALWAYS use click_code instead of raw click. Only use click(x,y) as an absolute last resort.
+- When on a browser, use run_javascript to read page HTML, get links/URLs, or interact with the DOM.
 - After performing actions, take another screenshot to verify the result.
 - Briefly describe what you see before and after taking actions.
 

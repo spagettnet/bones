@@ -25,10 +25,12 @@ class AgentBridge {
 
     private let executionContext: ToolExecutionContext
     private let overlayManager: OverlayManager?
+    private let widgetManager: WidgetManager?
 
-    init(executionContext: ToolExecutionContext, overlayManager: OverlayManager?) {
+    init(executionContext: ToolExecutionContext, overlayManager: OverlayManager?, widgetManager: WidgetManager? = nil) {
         self.executionContext = executionContext
         self.overlayManager = overlayManager
+        self.widgetManager = widgetManager
     }
 
     // MARK: - Lifecycle
@@ -411,6 +413,72 @@ class AgentBridge {
         case "destroy_overlay":
             overlayManager?.destroyOverlay()
             return toolResult(id: id, text: "Overlay destroyed", isError: false)
+
+        case "show_widget":
+            guard let wm = widgetManager else {
+                return toolResult(id: id, text: "Widget manager not available", isError: true)
+            }
+            let widgetId = input["widget_id"] as? String ?? "widget-\(UUID().uuidString.prefix(8))"
+            let type = input["type"] as? String ?? "custom_html"
+            let x = input["x"] as? Int ?? 0
+            let y = input["y"] as? Int ?? 0
+            let title = input["title"] as? String ?? "Widget"
+            let config = input["config"] as? [String: Any] ?? [:]
+            let result = wm.showWidget(id: widgetId, type: type, x: x, y: y, title: title, config: config)
+            return toolResult(id: id, text: result.message, isError: !result.success)
+
+        case "dismiss_widget":
+            guard let wm = widgetManager else {
+                return toolResult(id: id, text: "Widget manager not available", isError: true)
+            }
+            let widgetId = input["widget_id"] as? String ?? "all"
+            let result = wm.dismissWidget(id: widgetId)
+            return toolResult(id: id, text: result.message, isError: !result.success)
+
+        case "read_editor_content":
+            let textResults = AccessibilityHelper.readTextContent(pid: ctx.ownerPID, bounds: ctx.bounds)
+            if textResults.isEmpty {
+                return toolResult(id: id, text: "No text area found in the target window.", isError: false)
+            }
+            var output = ""
+            for (i, r) in textResults.enumerated() {
+                if textResults.count > 1 {
+                    let titleStr = r.title.map { ": \($0)" } ?? ""
+                    output += "--- Text Area \(i + 1) (\(r.role)\(titleStr)) ---\n"
+                }
+                output += r.text
+                if r.wasTruncated {
+                    output += "\n\n[Truncated — total \(r.characterCount) characters]"
+                }
+                output += "\n"
+            }
+            return toolResult(id: id, text: output, isError: false)
+
+        case "run_javascript":
+            let js = input["javascript"] as? String ?? ""
+            guard !js.isEmpty else {
+                return toolResult(id: id, text: "javascript parameter is required", isError: true)
+            }
+            let appName = ActiveAppState.shared.appName
+            let result = await InteractionTools.runJavaScriptInBrowser(js: js, appName: appName)
+            return toolResult(id: id, text: result.message, isError: !result.success)
+
+        case "visualize":
+            let html = input["html"] as? String ?? ""
+            let vizTitle = input["title"] as? String
+            guard !html.isEmpty else {
+                return toolResult(id: id, text: "html parameter is required", isError: true)
+            }
+            uiMessages.append(ChatMessageUI(
+                id: UUID(), role: .assistant,
+                text: "",
+                isStreaming: false,
+                visualizationHTML: html,
+                visualizationTitle: vizTitle
+            ))
+            delegate?.agentBridgeDidUpdateMessages(self)
+            let titleNote = vizTitle.map { ": \($0)" } ?? ""
+            return toolResult(id: id, text: "Visualization rendered in sidebar\(titleNote)", isError: false)
 
         default:
             return toolResult(id: id, text: "Unknown tool: \(name)", isError: true)
