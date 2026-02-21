@@ -6,9 +6,14 @@ Logs go to stderr (forwarded to BoneLog by Swift).
 """
 import json
 import sys
+import os
 import base64
 import uuid
 import anthropic
+
+# Set BONES_REDIS=1 to enable shared overlay store.
+# Requires Redis Stack running locally: docker run -d -p 6379:6379 redis/redis-stack-server
+REDIS_ENABLED = os.environ.get("BONES_REDIS", "0") == "1"
 
 # ---------------------------------------------------------------------------
 # IPC helpers
@@ -734,13 +739,15 @@ class Agent:
         self.run_turn()
 
     def _get_redis_store(self):
-        """Lazy-load the SharedOverlayStore."""
+        """Lazy-load the SharedOverlayStore. Returns None if BONES_REDIS!=1."""
+        if not REDIS_ENABLED:
+            return None
         if self._redis_store is None:
             try:
                 from redis_store import SharedOverlayStore
                 self._redis_store = SharedOverlayStore(api_key=self._api_key)
                 if not self._redis_store.is_available():
-                    log("Redis not available")
+                    log("Redis not reachable — shared overlays disabled")
                     self._redis_store = None
             except Exception as e:
                 log(f"Redis store init failed: {e}")
@@ -777,7 +784,7 @@ class Agent:
             if not self._page_domain:
                 return {"text": "No domain available — are you on a web page?", "is_error": True}
             if not store:
-                return {"text": "Redis is not available. Start redis-stack-server first.", "is_error": True}
+                return {"text": "Shared overlay store is not available (Redis not running).", "is_error": True}
 
             # Read overlay source from Swift
             source_result = self._send_silent_tool("read_overlay_source", {"id": overlay_id})
@@ -829,7 +836,7 @@ class Agent:
             mode = tool_input.get("mode", "exact")
             query = tool_input.get("query", "")
             if not store:
-                return {"text": "Redis is not available. Start redis-stack-server first.", "is_error": True}
+                return {"text": "Shared overlay store is not available (Redis not running).", "is_error": True}
 
             try:
                 if mode == "exact":
@@ -876,7 +883,7 @@ class Agent:
             if not redis_key:
                 return {"text": "Missing 'redis_key' parameter", "is_error": True}
             if not store:
-                return {"text": "Redis is not available. Start redis-stack-server first.", "is_error": True}
+                return {"text": "Shared overlay store is not available (Redis not running).", "is_error": True}
 
             try:
                 overlay = store.get_overlay(redis_key)
@@ -991,11 +998,14 @@ class Agent:
 
             try:
                 _status_sent = False  # track if we've sent a status for current tool block
+                tools = NATIVE_TOOLS if REDIS_ENABLED else [
+                    t for t in NATIVE_TOOLS if t["name"] not in PYTHON_TOOLS
+                ]
                 with self.client.messages.stream(
                     model=self.model,
                     max_tokens=16384,
                     system=SYSTEM_PROMPT,
-                    tools=NATIVE_TOOLS,
+                    tools=tools,
                     messages=self.messages
                 ) as stream:
                     for event in stream:

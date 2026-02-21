@@ -309,7 +309,18 @@ class AgentBridge {
                     uiMessages.remove(at: lastIdx)
                 }
                 var options: [ChatOption] = []
-                // Add saved overlay options first
+                // Add site app options first (e.g. Rehearsal for Partiful)
+                let currentURL = ActiveAppState.shared.pageURL
+                if !currentURL.isEmpty {
+                    let siteApps = SiteAppRegistry.shared.appsForURL(currentURL)
+                    for app in siteApps {
+                        options.append(ChatOption(
+                            label: "Launch \(app.name)",
+                            value: "Launch the \(app.name) app for this page (app_id: \(app.id))"
+                        ))
+                    }
+                }
+                // Add saved overlay options
                 let savedOverlays = SavedOverlayStore.shared.list()
                 for overlay in savedOverlays {
                     options.append(ChatOption(
