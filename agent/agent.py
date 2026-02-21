@@ -504,21 +504,76 @@ RULES:
 """
 
 # ---------------------------------------------------------------------------
+# Status messages
+# ---------------------------------------------------------------------------
+
+import random
+
+_THINKING_MESSAGES = [
+    "Bonesing...",
+    "Rattling skull...",
+    "Consulting the skeleton council...",
+    "Fixing broken bones...",
+    "Getting x-ray taken...",
+    "Calcium loading...",
+    "Assembling vertebrae...",
+    "Knitting cartilage...",
+    "Polishing femurs...",
+    "Cracking knuckles...",
+]
+
+_TOOL_STATUS_MAP = {
+    "take_screenshot": "Taking a look...",
+    "click_code": "Clicking...",
+    "click": "Clicking...",
+    "type_text": "Typing...",
+    "type_into_code": "Typing...",
+    "scroll": "Scrolling...",
+    "key_combo": "Pressing keys...",
+    "get_elements": "Reading elements...",
+    "find_elements": "Searching elements...",
+    "create_overlay": "Building overlay...",
+    "update_overlay": "Updating overlay...",
+    "save_overlay": "Writing overlay to disk...",
+    "load_overlay": "Loading saved overlay...",
+    "read_overlay_source": "Reading overlay source...",
+    "run_javascript": "Running JavaScript...",
+    "visualize": "Rendering visualization...",
+    "launch_site_app": "Launching app...",
+}
+
+def _tool_status_message(tool_name: str) -> str:
+    return _TOOL_STATUS_MAP.get(tool_name, random.choice(_THINKING_MESSAGES))
+
+
+# ---------------------------------------------------------------------------
 # Agent
 # ---------------------------------------------------------------------------
 
 class Agent:
-    def __init__(self, api_key: str):
+    # Fallback chain: if the primary model is overloaded, try the next one
+    FALLBACK_MODELS = [
+        "claude-opus-4-6",
+        "claude-opus-4-5",
+        "claude-sonnet-4-6",
+    ]
+
+    def __init__(self, api_key: str, model: str = "claude-opus-4-6"):
         self.client = anthropic.Anthropic(api_key=api_key)
+        self.model = model
         self.messages = []
         self.cancelled = False
         self._pending_user_messages = []  # buffered user messages received during tool execution
+        self._init_context = None  # screenshot + element codes from init, prepended to first message
 
     def handle_init(self, msg: dict):
-        """Process init message with screenshot + element codes."""
-        content = []
+        """Store init context (screenshot, elements, etc.) without triggering a Claude turn.
+
+        The context is prepended to the first user_message that arrives.
+        """
+        context = []
         if msg.get("screenshot_base64"):
-            content.append({
+            context.append({
                 "type": "image",
                 "source": {
                     "type": "base64",
@@ -531,9 +586,9 @@ class Agent:
                 f"[{e['code']}] {e.get('type','?')}: \"{e.get('label', e.get('role','?'))}\""
                 for e in msg["element_codes"]
             )
-            content.append({"type": "text", "text": codes_text})
+            context.append({"type": "text", "text": codes_text})
         if msg.get("page_url"):
-            content.append({"type": "text", "text": f"Page URL: {msg['page_url']}"})
+            context.append({"type": "text", "text": f"Page URL: {msg['page_url']}"})
         if msg.get("site_apps"):
             apps_text = "AVAILABLE SITE APPS for this page:\n"
             for app in msg["site_apps"]:
@@ -543,29 +598,30 @@ class Agent:
                 "Use launch_site_app(app_id='...') to launch. "
                 "Pass the page URL as the 'url' parameter."
             )
-            content.append({"type": "text", "text": apps_text})
+            context.append({"type": "text", "text": apps_text})
         if msg.get("saved_overlays"):
             saved_text = "SAVED OVERLAYS for this site/app:\n"
             for ov in msg["saved_overlays"]:
                 saved_text += f"- {ov['name']} (id: {ov['id']}): {ov['description']}\n"
             saved_text += (
-                "\nOffer to load these for the user. "
+                "\nThe user may ask to load these. "
                 "Use load_overlay(id='...') to restore a saved overlay instantly."
             )
-            content.append({"type": "text", "text": saved_text})
-        content.append({
-            "type": "text",
-            "text": "Here is the current state of the window. What do you see?"
-        })
-        self.messages.append({"role": "user", "content": content})
-        self.run_turn()
+            context.append({"type": "text", "text": saved_text})
+        self._init_context = context
+        log("init context stored, generating suggestions")
+        self._generate_suggestions(msg)
 
     def handle_user_message(self, msg: dict):
-        """Process user chat message."""
-        self.messages.append({
-            "role": "user",
-            "content": [{"type": "text", "text": msg["text"]}]
-        })
+        """Process user chat message. Prepends init context to the first message."""
+        content = []
+        if self._init_context is not None:
+            content.extend(self._init_context)
+            self._init_context = None
+            content.append({"type": "text", "text": f"[Screenshot of current window above]\n\nUser request: {msg['text']}"})
+        else:
+            content.append({"type": "text", "text": msg["text"]})
+        self.messages.append({"role": "user", "content": content})
         self.run_turn()
 
     def _read_tool_result(self):
@@ -647,12 +703,14 @@ class Agent:
             self._repair_messages()
 
             send_message({"type": "streaming_start"})
+            send_message({"type": "status", "text": random.choice(_THINKING_MESSAGES)})
             full_text = ""
             tool_uses = []
 
             try:
+                _status_sent = False  # track if we've sent a status for current tool block
                 with self.client.messages.stream(
-                    model="claude-opus-4-6",
+                    model=self.model,
                     max_tokens=16384,
                     system=SYSTEM_PROMPT,
                     tools=NATIVE_TOOLS,
@@ -665,11 +723,16 @@ class Agent:
 
                         if event.type == "content_block_start":
                             if hasattr(event.content_block, "id") and event.content_block.type == "tool_use":
+                                tool_name = event.content_block.name
                                 tool_uses.append({
                                     "id": event.content_block.id,
-                                    "name": event.content_block.name,
+                                    "name": tool_name,
                                     "input_json": ""
                                 })
+                                # Send status so user sees what's happening
+                                status = _tool_status_message(tool_name)
+                                send_message({"type": "status", "text": status})
+                                _status_sent = True
 
                         elif event.type == "content_block_delta":
                             if hasattr(event.delta, "text"):
@@ -682,6 +745,19 @@ class Agent:
                     # Get the final message for stop_reason
                     final = stream.get_final_message()
                     stop_reason = final.stop_reason
+
+            except anthropic.APIStatusError as e:
+                if e.status_code in (429, 529) and self._try_fallback_model():
+                    # Overloaded/rate-limited — switched model, retry this turn
+                    send_message({"type": "streaming_end"})
+                    send_message({"type": "streaming_start"})
+                    full_text = ""
+                    tool_uses = []
+                    continue
+                log(f"API error: {e}")
+                send_message({"type": "streaming_end"})
+                send_message({"type": "error", "message": str(e)})
+                return
 
             except Exception as e:
                 log(f"API error: {e}")
@@ -800,6 +876,87 @@ class Agent:
         # Max iterations reached
         send_message({"type": "done"})
 
+    _DEFAULT_SUGGESTIONS = [
+        {"label": "Tell me what you see", "value": "Tell me what you see"},
+        {"label": "Organize this page", "value": "Make a simple UI overlay to organize the content of this page"},
+        {"label": "Gameify this page", "value": "Gameify this page — make an interactive game or fun overlay based on the content"},
+    ]
+
+    def _generate_suggestions(self, msg: dict):
+        """Quick Claude call to generate contextual quick-action suggestions from the screenshot."""
+        content = []
+        if msg.get("screenshot_base64"):
+            content.append({
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": msg.get("screenshot_media_type", "image/png"),
+                    "data": msg["screenshot_base64"]
+                }
+            })
+        if msg.get("page_url"):
+            content.append({"type": "text", "text": f"URL: {msg['page_url']}"})
+
+        content.append({"type": "text", "text": (
+            "Look at this screenshot. Generate exactly 3 quick-action suggestions for the user. "
+            "Each should be a short button label (max 6 words) and a longer value (the actual instruction). "
+            "The 3 categories are:\n"
+            "1. Describe/explain what's on screen\n"
+            "2. Organize or build a useful UI for the content\n"
+            "3. Gameify or make the content fun/interactive\n\n"
+            "Also write a short greeting (1 sentence) that references what app/site you see.\n\n"
+            "Respond ONLY with JSON, no markdown:\n"
+            '{"greeting": "...", "suggestions": [{"label": "...", "value": "..."}, ...]}'
+        )})
+
+        try:
+            response = self.client.messages.create(
+                model="claude-sonnet-4-6",
+                max_tokens=400,
+                messages=[{"role": "user", "content": content}]
+            )
+            text = response.content[0].text.strip()
+            # Strip markdown code fence if present
+            if text.startswith("```"):
+                text = text.split("\n", 1)[1] if "\n" in text else text[3:]
+                if text.endswith("```"):
+                    text = text[:-3]
+                text = text.strip()
+            data = json.loads(text)
+            suggestions = data.get("suggestions", self._DEFAULT_SUGGESTIONS)
+            greeting = data.get("greeting", "What would you like to do?")
+            log(f"generated {len(suggestions)} suggestions")
+            send_message({
+                "type": "suggestions",
+                "greeting": greeting,
+                "suggestions": suggestions
+            })
+        except Exception as e:
+            log(f"suggestion generation failed: {e}, using defaults")
+            send_message({
+                "type": "suggestions",
+                "greeting": "What would you like to do?",
+                "suggestions": self._DEFAULT_SUGGESTIONS
+            })
+
+    def _try_fallback_model(self) -> bool:
+        """Try switching to the next model in the fallback chain. Returns True if switched."""
+        try:
+            idx = self.FALLBACK_MODELS.index(self.model)
+        except ValueError:
+            idx = -1
+        next_idx = idx + 1
+        if next_idx < len(self.FALLBACK_MODELS):
+            old_model = self.model
+            self.model = self.FALLBACK_MODELS[next_idx]
+            log(f"model overloaded, switching {old_model} -> {self.model}")
+            send_message({
+                "type": "text_delta",
+                "text": f"*{old_model} is busy, switching to {self.model}...*\n\n"
+            })
+            return True
+        return False
+
     def cancel(self):
         self.cancelled = True
 
@@ -821,7 +978,8 @@ def main():
         log(f"received: {msg_type}")
 
         if msg_type == "init":
-            agent = Agent(api_key=msg["api_key"])
+            model = msg.get("model", "claude-opus-4-6")
+            agent = Agent(api_key=msg["api_key"], model=model)
             agent.handle_init(msg)
 
         elif msg_type == "user_message":

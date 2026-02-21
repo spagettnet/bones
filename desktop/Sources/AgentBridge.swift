@@ -16,6 +16,8 @@ class AgentBridge {
     weak var delegate: AgentBridgeDelegate?
     private(set) var uiMessages: [ChatMessageUI] = []
     private(set) var isRunning = false
+    private var statusText: String?  // transient status shown in streaming bubble
+    private var streamingHasRealText = false  // true once a text_delta arrives for current stream
 
     private var process: Process?
     private var stdinPipe: Pipe?
@@ -108,24 +110,17 @@ class AgentBridge {
         isRunning = true
         BoneLog.log("AgentBridge: python process launched (pid \(proc.processIdentifier))")
 
-        // Add initial UI message
-        uiMessages.append(ChatMessageUI(
-            id: UUID(), role: .user,
-            text: "[Screenshot sent] What do you see?",
-            isStreaming: false
-        ))
-        delegate?.agentBridgeDidUpdateMessages(self)
-
         // Start reading stdout
         startReading()
 
         // Start reading stderr for logging
         startStderrReading()
 
-        // Send init message
+        // Send init message to Python (sets up API key + screenshot context, but doesn't auto-trigger Claude)
         var initMsg: [String: Any] = [
             "type": "init",
             "api_key": apiKey,
+            "model": ModelSetting.shared.currentModelID,
             "screenshot_base64": screenshotBase64,
             "screenshot_media_type": screenshotMediaType,
             "element_codes": elementCodes
@@ -147,6 +142,15 @@ class AgentBridge {
             }
         }
         sendToProcess(initMsg)
+
+        // Show status while Python generates contextual suggestions
+        uiMessages.append(ChatMessageUI(
+            id: UUID(), role: .assistant,
+            text: "Taking a look...",
+            isStreaming: true,
+            isStatus: true
+        ))
+        delegate?.agentBridgeDidUpdateMessages(self)
     }
 
     func sendUserMessage(text: String) {
@@ -291,15 +295,63 @@ class AgentBridge {
         guard let type = msg["type"] as? String else { return }
 
         switch type {
+        case "suggestions":
+            // Replace the status placeholder with contextual options
+            if let suggestions = msg["suggestions"] as? [[String: String]] {
+                // Remove the "Taking a look..." status message
+                if let lastIdx = uiMessages.indices.last(where: { uiMessages[$0].isStatus }) {
+                    uiMessages.remove(at: lastIdx)
+                }
+                var options: [ChatOption] = []
+                // Add saved overlay options first
+                let savedOverlays = SavedOverlayStore.shared.list()
+                for overlay in savedOverlays {
+                    options.append(ChatOption(
+                        label: "Load \(overlay.name)",
+                        value: "Load my saved overlay called \"\(overlay.name)\" (id: \(overlay.id))"
+                    ))
+                }
+                for s in suggestions {
+                    if let label = s["label"], let value = s["value"] {
+                        options.append(ChatOption(label: label, value: value))
+                    }
+                }
+                let greeting = msg["greeting"] as? String ?? "What would you like to do?"
+                uiMessages.append(ChatMessageUI(
+                    id: UUID(), role: .assistant,
+                    text: greeting,
+                    isStreaming: false,
+                    options: options
+                ))
+                delegate?.agentBridgeDidUpdateMessages(self)
+            }
+
         case "streaming_start":
             // Add streaming placeholder
+            streamingHasRealText = false
             uiMessages.append(ChatMessageUI(
                 id: UUID(), role: .assistant, text: "", isStreaming: true
             ))
             delegate?.agentBridgeDidUpdateMessages(self)
 
+        case "status":
+            // Only show status in the bubble if no real text has arrived yet
+            if let text = msg["text"] as? String, let lastIdx = lastStreamingIndex(), !streamingHasRealText {
+                statusText = text
+                uiMessages[lastIdx].text = text
+                uiMessages[lastIdx].isStatus = true
+                delegate?.agentBridgeDidUpdateMessages(self)
+            }
+
         case "text_delta":
             if let text = msg["text"] as? String, let lastIdx = lastStreamingIndex() {
+                // Clear status text on first real text delta
+                if !streamingHasRealText && uiMessages[lastIdx].isStatus {
+                    uiMessages[lastIdx].text = ""
+                    uiMessages[lastIdx].isStatus = false
+                    statusText = nil
+                }
+                streamingHasRealText = true
                 uiMessages[lastIdx].text += text
                 delegate?.agentBridgeDidUpdateMessages(self)
             }
@@ -307,6 +359,13 @@ class AgentBridge {
         case "streaming_end":
             if let lastIdx = lastStreamingIndex() {
                 uiMessages[lastIdx].isStreaming = false
+                uiMessages[lastIdx].isStatus = false
+                statusText = nil
+                // Remove only if no real text was ever written (was status-only or empty)
+                if !streamingHasRealText {
+                    uiMessages.remove(at: lastIdx)
+                }
+                streamingHasRealText = false
                 delegate?.agentBridgeDidUpdateMessages(self)
             }
 

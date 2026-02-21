@@ -206,11 +206,12 @@ class BoneBreakAnimation {
             let localX = screenX - overlayOrigin.x
             let localY = screenY - overlayOrigin.y
 
-            let spriteSize = SkeletonRenderer.spriteSize(for: boneID)
             let image = SkeletonRenderer.boneImage(for: boneID)
+            let scale: CGFloat = 2.0
+            let layerSize = CGSize(width: image.size.width * scale, height: image.size.height * scale)
 
             let layer = CALayer()
-            layer.bounds = CGRect(origin: .zero, size: spriteSize)
+            layer.bounds = CGRect(origin: .zero, size: layerSize)
             layer.position = CGPoint(x: localX, y: localY)
             layer.contents = image.cgImage(forProposedRect: nil, context: nil, hints: nil)
             layer.contentsGravity = .resizeAspect

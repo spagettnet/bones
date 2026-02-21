@@ -120,6 +120,9 @@ class SidebarWindow: NSPanel, AgentBridgeDelegate {
         // WKWebView for chat messages
         let config = WKWebViewConfiguration()
         config.suppressesIncrementalRendering = false
+        let controller = WKUserContentController()
+        controller.add(self, name: "bones")
+        config.userContentController = controller
 
         webView = WKWebView(frame: NSRect(
             x: 0, y: inputHeight,
@@ -225,6 +228,51 @@ class SidebarWindow: NSPanel, AgentBridgeDelegate {
                 color: rgba(128,128,128,0.5);
             }
             @keyframes blink { 50% { opacity: 0; } }
+            .bubble.status-only {
+                font-style: italic;
+                opacity: 0.6;
+            }
+            .options-container {
+                display: flex;
+                flex-direction: column;
+                gap: 6px;
+                margin-top: 8px;
+            }
+            .option-btn {
+                display: block;
+                width: 100%;
+                padding: 10px 14px;
+                border: 1.5px solid rgba(0, 122, 255, 0.4);
+                border-radius: 10px;
+                background: rgba(0, 122, 255, 0.08);
+                color: #007AFF;
+                font-size: 13px;
+                font-weight: 500;
+                text-align: left;
+                cursor: pointer;
+                transition: background 0.15s, border-color 0.15s;
+                -webkit-appearance: none;
+                font-family: inherit;
+                line-height: 1.3;
+            }
+            .option-btn:hover {
+                background: rgba(0, 122, 255, 0.15);
+                border-color: rgba(0, 122, 255, 0.6);
+            }
+            .option-btn:active {
+                background: rgba(0, 122, 255, 0.25);
+            }
+            @media (prefers-color-scheme: dark) {
+                .option-btn {
+                    border-color: rgba(100, 180, 255, 0.35);
+                    background: rgba(100, 180, 255, 0.08);
+                    color: #64B4FF;
+                }
+                .option-btn:hover {
+                    background: rgba(100, 180, 255, 0.15);
+                    border-color: rgba(100, 180, 255, 0.5);
+                }
+            }
             .bubble.visualization {
                 max-width: 100%;
                 width: 100%;
@@ -301,7 +349,23 @@ class SidebarWindow: NSPanel, AgentBridgeDelegate {
                         var div = document.createElement('div');
                         div.className = 'bubble ' + msg.role;
                         if (msg.isStreaming) div.classList.add('streaming');
+                        if (msg.isStatus) div.classList.add('status-only');
                         div.innerHTML = renderMarkdown(msg.text);
+                        if (msg.options && msg.options.length > 0) {
+                            var optDiv = document.createElement('div');
+                            optDiv.className = 'options-container';
+                            msg.options.forEach(function(opt) {
+                                var btn = document.createElement('button');
+                                btn.className = 'option-btn';
+                                btn.textContent = opt.label;
+                                btn.onclick = function() {
+                                    optDiv.remove();
+                                    window.webkit.messageHandlers.bones.postMessage({action: 'select_option', text: opt.value});
+                                };
+                                optDiv.appendChild(btn);
+                            });
+                            div.appendChild(optDiv);
+                        }
                         container.appendChild(div);
                     }
                 });
@@ -376,8 +440,12 @@ class SidebarWindow: NSPanel, AgentBridgeDelegate {
             var entry: [String: Any] = [
                 "role": msg.role == .user ? "user" : "assistant",
                 "text": msg.text,
-                "isStreaming": msg.isStreaming
+                "isStreaming": msg.isStreaming,
+                "isStatus": msg.isStatus
             ]
+            if let options = msg.options {
+                entry["options"] = options.map { ["label": $0.label, "value": $0.value] }
+            }
             if let vizHTML = msg.visualizationHTML {
                 entry["visualizationHTML"] = vizHTML
             }
@@ -444,6 +512,23 @@ extension SidebarWindow: WKNavigationDelegate {
         if let pending = pendingUpdate {
             pendingUpdate = nil
             pushMessagesToWebView(pending)
+        }
+    }
+}
+
+// MARK: - WKScriptMessageHandler
+
+extension SidebarWindow: WKScriptMessageHandler {
+    nonisolated func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        MainActor.assumeIsolated {
+            guard message.name == "bones",
+                  let body = message.body as? [String: Any],
+                  let action = body["action"] as? String
+            else { return }
+
+            if action == "select_option", let text = body["text"] as? String {
+                agentBridge.sendUserMessage(text: text)
+            }
         }
     }
 }

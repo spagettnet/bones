@@ -213,20 +213,18 @@ class DogSpriteView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
-        ctx.saveGState()
-
-        if !facingLeft {
-            ctx.translateBy(x: bounds.width, y: 0)
-            ctx.scaleBy(x: -1, y: 1)
+        let size = bounds.size
+        SkeletonRenderer.drawWithOutline(in: ctx, size: size) { buf in
+            if !self.facingLeft {
+                buf.translateBy(x: size.width, y: 0)
+                buf.scaleBy(x: -1, y: 1)
+            }
+            if self.isSitting {
+                self.drawSittingDog(in: buf)
+            } else {
+                self.drawRunningDog(in: buf)
+            }
         }
-
-        if isSitting {
-            drawSittingDog(in: ctx)
-        } else {
-            drawRunningDog(in: ctx)
-        }
-
-        ctx.restoreGState()
     }
 
     private func drawRunningDog(in ctx: CGContext) {

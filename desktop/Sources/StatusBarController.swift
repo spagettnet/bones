@@ -1,6 +1,45 @@
 import AppKit
 
 @MainActor
+class ModelSetting {
+    static let shared = ModelSetting()
+
+    struct Model {
+        let id: String
+        let label: String
+    }
+
+    static let available: [Model] = [
+        Model(id: "claude-opus-4-6", label: "Claude Opus 4.6"),
+        Model(id: "claude-opus-4-5", label: "Claude Opus 4.5"),
+        Model(id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6"),
+    ]
+
+    private let configPath: String
+
+    var currentModelID: String {
+        didSet { save() }
+    }
+
+    private init() {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        configPath = "\(home)/.config/bones/model"
+        if let saved = try? String(contentsOfFile: configPath, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines),
+           !saved.isEmpty {
+            currentModelID = saved
+        } else {
+            currentModelID = "claude-opus-4-6"
+        }
+    }
+
+    private func save() {
+        let dir = (configPath as NSString).deletingLastPathComponent
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        try? currentModelID.write(toFile: configPath, atomically: true, encoding: .utf8)
+    }
+}
+
+@MainActor
 class StatusBarController: NSObject {
     let statusItem: NSStatusItem
     let dragController: DragController
@@ -45,6 +84,19 @@ class StatusBarController: NSObject {
         debugItem.isEnabled = ActiveAppState.shared.isActive
         menu.addItem(debugItem)
 
+        // Model picker submenu
+        let modelMenu = NSMenu()
+        for model in ModelSetting.available {
+            let item = NSMenuItem(title: model.label, action: #selector(selectModel(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = model.id
+            item.state = model.id == ModelSetting.shared.currentModelID ? .on : .off
+            modelMenu.addItem(item)
+        }
+        let modelItem = NSMenuItem(title: "Model", action: nil, keyEquivalent: "")
+        modelItem.submenu = modelMenu
+        menu.addItem(modelItem)
+
         menu.addItem(.separator())
         menu.addItem(withTitle: "Set API Key...", action: #selector(setAPIKey), keyEquivalent: "")
             .target = self
@@ -68,6 +120,13 @@ class StatusBarController: NSObject {
         alert.informativeText = "Drag the little guy onto any window to screenshot it.\n\nLeft-click + drag: Screenshot a window\nRight-click: This menu"
         alert.alertStyle = .informational
         alert.runModal()
+    }
+
+    @objc private func selectModel(_ sender: NSMenuItem) {
+        if let modelID = sender.representedObject as? String {
+            ModelSetting.shared.currentModelID = modelID
+            BoneLog.log("StatusBar: model set to \(modelID)")
+        }
     }
 
     @objc private func setAPIKey() {
