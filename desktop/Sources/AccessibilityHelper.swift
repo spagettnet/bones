@@ -170,6 +170,76 @@ enum AccessibilityHelper {
         return buildTreeRecursive(element: element, semanticDepth: 0, maxDepth: maxDepth)
     }
 
+    // MARK: - AX Actions (operate on live elements, not snapshots)
+
+    /// Search the live AX tree for an element matching a query and perform AXPress on it.
+    /// Returns true if the element was found and pressed successfully.
+    static func pressElement(query: String, pid: pid_t, windowBounds: CGRect) -> Bool {
+        guard let window = findAXWindow(pid: pid, matchingBounds: windowBounds) else { return false }
+        guard let element = findLiveElement(query: query, in: window) else { return false }
+        let result = AXUIElementPerformAction(element, kAXPressAction as CFString)
+        return result == .success
+    }
+
+    /// Search the live AX tree for an input field matching a query, focus it, and set its value.
+    /// Returns true if successful.
+    static func focusAndSetValue(query: String, value: String, pid: pid_t, windowBounds: CGRect) -> Bool {
+        guard let window = findAXWindow(pid: pid, matchingBounds: windowBounds) else { return false }
+        guard let element = findLiveElement(query: query, in: window) else { return false }
+
+        // Try to focus the element
+        AXUIElementPerformAction(element, kAXRaiseAction as CFString)
+        let focusResult = AXUIElementSetAttributeValue(element, kAXFocusedAttribute as CFString, true as CFTypeRef)
+
+        // Try to set the value directly
+        let valueResult = AXUIElementSetAttributeValue(element, kAXValueAttribute as CFString, value as CFTypeRef)
+
+        return focusResult == .success || valueResult == .success
+    }
+
+    /// Search the live AX tree for an element matching a query string.
+    /// Walks the tree recursively matching against role, title, description, subrole.
+    private static func findLiveElement(query: String, in element: AXUIElement) -> AXUIElement? {
+        AXUIElementSetMessagingTimeout(element, 0.3)
+        let lowered = query.lowercased()
+
+        // Check this element's attributes
+        let role = stringAttribute(of: element, attribute: kAXRoleAttribute as CFString) ?? ""
+        let title = stringAttribute(of: element, attribute: kAXTitleAttribute as CFString) ?? ""
+        let desc = stringAttribute(of: element, attribute: kAXDescriptionAttribute as CFString) ?? ""
+        let roleDesc = stringAttribute(of: element, attribute: kAXRoleDescriptionAttribute as CFString) ?? ""
+        let subrole = stringAttribute(of: element, attribute: kAXSubroleAttribute as CFString) ?? ""
+
+        let fields = [role, title, desc, roleDesc, subrole]
+        if fields.contains(where: { !$0.isEmpty && $0.lowercased().contains(lowered) }) {
+            // Check if this element supports press or is otherwise interactable
+            var actionsRef: CFArray?
+            if AXUIElementCopyActionNames(element, &actionsRef) == .success,
+               let actions = actionsRef as? [String], !actions.isEmpty {
+                return element
+            }
+            // Even without actions, return it if it has a frame (can be clicked)
+            if getPosition(of: element) != nil {
+                return element
+            }
+        }
+
+        // Recurse into children
+        var childrenRef: CFTypeRef?
+        if AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &childrenRef) == .success,
+           let children = childrenRef as? [AXUIElement] {
+            let limit = min(children.count, 50)
+            for i in 0..<limit {
+                AXUIElementSetMessagingTimeout(children[i], 0.3)
+                if let found = findLiveElement(query: lowered, in: children[i]) {
+                    return found
+                }
+            }
+        }
+
+        return nil
+    }
+
     // MARK: - Private
 
     // Roles that are pure structural wrappers — don't count toward depth budget
