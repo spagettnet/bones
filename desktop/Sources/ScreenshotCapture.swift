@@ -58,8 +58,47 @@ enum ScreenshotCapture {
             NSSound(named: "Pop")?.play()
             FeedbackWindow.show(message: "Screenshot saved!", detail: filename)
 
+            ActiveAppState.shared.recordScreenshot(filename: filename)
+
         } catch {
             showError("Screenshot failed: \(error.localizedDescription)")
+        }
+    }
+
+    /// Capture a window and return PNG data without saving to disk.
+    static func captureToData(windowID: CGWindowID) async -> Data? {
+        do {
+            let content = try await SCShareableContent.excludingDesktopWindows(
+                false, onScreenWindowsOnly: true
+            )
+            guard let scWindow = content.windows.first(where: { $0.windowID == windowID }) else {
+                return nil
+            }
+
+            let filter = SCContentFilter(desktopIndependentWindow: scWindow)
+            let config = SCStreamConfiguration()
+            config.width = Int(scWindow.frame.width) * 2
+            config.height = Int(scWindow.frame.height) * 2
+            config.captureResolution = .best
+            config.showsCursor = false
+
+            let cgImage = try await SCScreenshotManager.captureImage(
+                contentFilter: filter, configuration: config
+            )
+
+            let nsImage = NSImage(
+                cgImage: cgImage,
+                size: NSSize(width: scWindow.frame.width, height: scWindow.frame.height)
+            )
+
+            guard let tiffData = nsImage.tiffRepresentation,
+                  let bitmapRep = NSBitmapImageRep(data: tiffData),
+                  let pngData = bitmapRep.representation(using: .png, properties: [:])
+            else { return nil }
+
+            return pngData
+        } catch {
+            return nil
         }
     }
 

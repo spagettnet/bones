@@ -4,14 +4,17 @@ import AppKit
 class StatusBarController: NSObject {
     let statusItem: NSStatusItem
     let dragController: DragController
+    let sessionController: SessionController
 
     override init() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        sessionController = SessionController()
         dragController = DragController()
         super.init()
+        dragController.sessionController = sessionController
 
         if let button = statusItem.button {
-            button.image = LittleGuyRenderer.menuBarImage()
+            button.image = SkeletonRenderer.menuBarImage()
             button.image?.isTemplate = true
             button.sendAction(on: [.leftMouseDown, .rightMouseUp])
             button.action = #selector(statusBarAction(_:))
@@ -32,6 +35,18 @@ class StatusBarController: NSObject {
         let menu = NSMenu()
         menu.addItem(withTitle: "About Bones", action: #selector(showAbout), keyEquivalent: "")
             .target = self
+
+        let debugItem = NSMenuItem(title: "Debug Panel", action: #selector(toggleDebugPanel), keyEquivalent: "d")
+        debugItem.target = self
+        debugItem.state = ActiveAppState.shared.debugVisible ? .on : .off
+        debugItem.isEnabled = ActiveAppState.shared.isActive
+        menu.addItem(debugItem)
+
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "Set API Key...", action: #selector(setAPIKey), keyEquivalent: "")
+            .target = self
+        menu.addItem(withTitle: "End Chat Session", action: #selector(endSession), keyEquivalent: "")
+            .target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit", action: #selector(quit), keyEquivalent: "q")
             .target = self
@@ -40,12 +55,24 @@ class StatusBarController: NSObject {
         statusItem.menu = nil
     }
 
+    @objc private func toggleDebugPanel() {
+        sessionController.toggleDebugTab()
+    }
+
     @objc private func showAbout() {
         let alert = NSAlert()
         alert.messageText = "Bones"
         alert.informativeText = "Drag the little guy onto any window to screenshot it.\n\nLeft-click + drag: Screenshot a window\nRight-click: This menu"
         alert.alertStyle = .informational
         alert.runModal()
+    }
+
+    @objc private func setAPIKey() {
+        KeychainHelper.promptForAPIKey()
+    }
+
+    @objc private func endSession() {
+        sessionController.endSession()
     }
 
     @objc private func quit() {

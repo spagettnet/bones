@@ -6,7 +6,11 @@ class DragController {
     var highlightWindow: HighlightWindow?
     var isDragging = false
     var currentTargetWindowID: CGWindowID?
+    var currentTargetInfo: WindowInfo?
+    var sessionController: SessionController?
     private let dragThreshold: CGFloat = 3.0
+    private lazy var soundEngine = BoneSoundEngine()
+    private var breakAnimation: BoneBreakAnimation?
 
     func beginDrag(from event: NSEvent, statusItem: NSStatusItem) {
         guard let buttonWindow = statusItem.button?.window else { return }
@@ -29,14 +33,19 @@ class DragController {
 
                 if !isDragging && distance > dragThreshold {
                     isDragging = true
-                    dragWindow = DragWindow(image: LittleGuyRenderer.dragImage())
+                    BoneLog.log("DragController: drag threshold crossed, creating DragWindow")
+                    dragWindow = DragWindow()
                     highlightWindow = HighlightWindow()
+                    dragWindow?.startPhysics()
                     dragWindow?.orderFront(nil)
                 }
 
                 if isDragging {
                     dragWindow?.followMouse(at: currentPoint)
                     updateHighlight(at: currentPoint)
+                    // Play rattle sound based on bone velocity
+                    let velocity = dragWindow?.skeletonView.physics.currentVelocity() ?? 0
+                    soundEngine.playRattleIfNeeded(velocity: velocity)
                 }
 
             case .leftMouseUp:
@@ -47,7 +56,6 @@ class DragController {
                         await ScreenshotCapture.captureFullScreen()
                     }
                 }
-                cleanup()
                 keepTracking = false
 
             case .keyDown:
@@ -65,30 +73,73 @@ class DragController {
     private func updateHighlight(at point: NSPoint) {
         if let windowInfo = WindowDetector.windowAt(point: point) {
             currentTargetWindowID = windowInfo.windowID
+            currentTargetInfo = windowInfo
             highlightWindow?.highlight(frame: windowInfo.bounds)
         } else {
             currentTargetWindowID = nil
+            currentTargetInfo = nil
             highlightWindow?.orderOut(nil)
         }
     }
 
     private func handleDrop(at point: NSPoint) {
-        guard let windowID = currentTargetWindowID else {
+        guard let windowInfo = currentTargetInfo ?? WindowDetector.windowAt(point: point) else {
             cleanup()
             return
         }
-        cleanup()
-        Task { @MainActor in
-            await ScreenshotCapture.capture(windowID: windowID)
-        }
-    }
+        ActiveAppState.shared.attach(windowInfo: windowInfo)
+        
+        // Freeze skeleton before tearing down drag UI.
 
-    private func cleanup() {
+        BoneLog.log("DragController: handleDrop at \(point), windowInfo bounds=\(windowInfo.bounds)")
+
+        // Freeze the skeleton and get its final pose
+        let finalPose = dragWindow?.freezeAndGetPose() ?? SkeletonDefinition.restPose(hangingFrom: point)
+        let dragFrame = dragWindow?.frame ?? .zero
+        let dropPoint = point
+
+        soundEngine.stop()
+
+        // Clean up drag and highlight windows (keep session controller alive).
+        dragWindow?.stopPhysics()
         dragWindow?.close()
         dragWindow = nil
         highlightWindow?.close()
         highlightWindow = nil
         isDragging = false
         currentTargetWindowID = nil
+        currentTargetInfo = nil
+
+        // Play break animation, then start session
+        let animation = BoneBreakAnimation()
+        self.breakAnimation = animation
+
+        BoneLog.log("DragController: starting break animation, dragFrame=\(dragFrame)")
+        animation.play(
+            fromPose: finalPose,
+            dragWindowFrame: dragFrame,
+            targetWindowInfo: windowInfo,
+            dropPoint: dropPoint
+        ) { [weak self] in
+            BoneLog.log("DragController: break animation complete, starting session")
+            self?.breakAnimation = nil
+            Task { @MainActor in
+                await self?.sessionController?.startSession(windowInfo: windowInfo)
+            }
+        }
+    }
+
+    private func cleanup() {
+        soundEngine.stop()
+        dragWindow?.stopPhysics()
+        dragWindow?.close()
+        dragWindow = nil
+        highlightWindow?.close()
+        highlightWindow = nil
+        breakAnimation?.cancel()
+        breakAnimation = nil
+        isDragging = false
+        currentTargetWindowID = nil
+        currentTargetInfo = nil
     }
 }

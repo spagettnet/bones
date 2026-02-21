@@ -1,18 +1,17 @@
 # Bones
 
-A macOS tool suite for interacting with app windows via a menu bar "little guy" character. Drag him onto a window to screenshot it, click him for a fullscreen capture. Future: an AI agent sidebar that processes screenshots and builds dynamic UI overlays for interacting with any app.
+A macOS tool suite for interacting with app windows via a menu bar character. Drag him onto a window to open a Claude-powered chat sidebar that can see and interact with the app.
 
 ## Monorepo Structure
 
 ```
-desktop/     — macOS menu bar app (Swift/AppKit). The "little guy" drag-to-screenshot tool.
-agent/       — Claude agent backend. Processes screenshots, powers the chat sidebar. (planned)
+desktop/     — macOS menu bar app (Swift/AppKit). Drag-to-sidebar + AI chat.
 overlay/     — Dynamic UI layer system. Agent-generated interactive overlays on app windows. (planned)
 ```
 
 ## desktop/ — Menu Bar App
 
-Native macOS app, no Xcode project. Built with `swiftc` directly.
+Native macOS app, no Xcode project. Built with `swiftc` directly. See **`desktop/ARCHITECTURE.md`** for detailed file map, data flow, and guides for adding tools and modifying the sidebar.
 
 ### Build & Run
 
@@ -22,41 +21,45 @@ cd desktop
 open build/Bones.app
 ```
 
-### Key Files
-
-- `Sources/AppDelegate.swift` — App lifecycle, screen recording permission check
-- `Sources/StatusBarController.swift` — NSStatusItem setup, mouse event interception, right-click menu
-- `Sources/DragController.swift` — Mouse tracking loop: drag threshold, floating window, highlight, drop handling
-- `Sources/DragWindow.swift` — Borderless floating window showing the character during drag
-- `Sources/HighlightWindow.swift` — Blue overlay on the target window during drag
-- `Sources/WindowDetector.swift` — CGWindowListCopyWindowInfo hit-testing to find window under cursor
-- `Sources/ScreenshotCapture.swift` — ScreenCaptureKit capture, saves PNG to Desktop + copies to clipboard
-- `Sources/LittleGuyRenderer.swift` — CoreGraphics-drawn stick figure (18×18 menu bar icon + 48×48 drag avatar)
-- `Sources/FeedbackWindow.swift` — HUD toast notification on successful capture
-- `Info.plist` — LSUIElement=true (no Dock icon), screen capture usage description
-
 ### How It Works
 
-1. NSStatusItem with custom button intercepts `leftMouseDown`
-2. Enters a `window.nextEvent(matching:)` tracking loop (standard AppKit mouse tracking)
-3. If dragged past 3px threshold: floating character + blue highlight follow cursor
-4. On drop: `WindowDetector` finds window under cursor via CGWindowListCopyWindowInfo (layer==0, excludes own PID)
-5. `ScreenshotCapture` uses ScreenCaptureKit to capture that specific window at Retina resolution
-6. If clicked without dragging: captures fullscreen screenshot
-7. Saves to ~/Desktop as PNG, copies to clipboard, plays sound, shows toast
+1. User drags the menu bar character onto any app window
+2. `DragController` tracks mouse, shows floating avatar + blue highlight
+3. On drop: `SessionController` brings the target app forward, opens a chat sidebar
+4. `ChatController` captures a screenshot and sends it to Claude (Anthropic Messages API)
+5. Claude describes what it sees; user chats about the window
+6. Claude has tools: `take_screenshot`, `click`, `type_text`, `scroll` — executed via CGEvent
+7. If clicked without dragging: captures fullscreen screenshot to ~/Desktop
+
+### Key Areas
+
+- **Sidebar chat**: `SessionController` → `ChatController` → `AnthropicClient` → `SidebarWindow`
+- **Drag-drop**: `StatusBarController` → `DragController` → `WindowDetector`
+- **Screen capture**: `ScreenshotCapture` (ScreenCaptureKit, returns Data or saves to disk)
+- **Window interaction**: `InteractionTools` (CGEvent click/type/scroll with 2x retina coordinate mapping)
+- **API key**: `KeychainHelper` (macOS Keychain, first-run dialog prompt)
 
 ### Permissions
 
-- **Screen Recording** required. Granted in System Settings > Privacy & Security > Screen Recording.
-- App is ad-hoc signed (`codesign --sign -`). After rebuilds, may need to toggle permission off/on.
-- No Accessibility permission needed.
+- **Screen Recording** — System Settings > Privacy & Security > Screen Recording
+- **Accessibility** — System Settings > Privacy & Security > Accessibility (needed for click/type/scroll tools)
+- After rebuilds, may need to toggle permissions off/on (code signature changes)
 
 ### Conventions
 
 - All UI classes are `@MainActor`
-- All windows use `isReleasedWhenClosed = false` to avoid ARC double-free with AppKit
+- All windows use `isReleasedWhenClosed = false`
 - Entry point is `main.swift` using `MainActor.assumeIsolated` (Swift 6.2 concurrency)
-- Menu bar icon is a template image (adapts to dark/light mode automatically)
+- Build with `swiftc` directly — no SPM, no Xcode. Add new `.swift` files to `build.sh`
+- Menu bar icon is a template image (adapts to dark/light mode)
+
+### Debug Logging
+
+- Use `BoneLog.log("Component: message")` for debug logging throughout the app
+- Logs write to `~/Desktop/bones-debug.log` (truncated on each app launch)
+- Add generous logging in animations, physics, drag/drop, and session flows
+- Prefix log messages with the component name (e.g., `DragController:`, `BoneBreak:`, `DogAnim:`)
+- Tail the log with: `tail -f ~/Desktop/bones-debug.log`
 
 ## Conventions (All Packages)
 

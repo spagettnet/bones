@@ -1,15 +1,12 @@
 import AppKit
 
 @MainActor
-class HighlightWindow: NSWindow {
-    override init(
-        contentRect: NSRect,
-        styleMask style: NSWindow.StyleMask,
-        backing backingStoreType: NSWindow.BackingStoreType,
-        defer flag: Bool
-    ) {
+class PersistentHighlightWindow: NSWindow {
+    static let shared = PersistentHighlightWindow()
+
+    private init() {
         super.init(
-            contentRect: contentRect,
+            contentRect: .zero,
             styleMask: .borderless,
             backing: .buffered,
             defer: false
@@ -23,19 +20,9 @@ class HighlightWindow: NSWindow {
         self.contentView = HighlightBorderView()
     }
 
-    convenience init() {
-        self.init(
-            contentRect: .zero,
-            styleMask: .borderless,
-            backing: .buffered,
-            defer: false
-        )
-    }
-
     func highlight(frame cgFrame: CGRect) {
         guard let screen = NSScreen.screens.first else { return }
         let screenHeight = screen.frame.height
-        // Convert CG (top-left origin) -> AppKit (bottom-left origin)
         let appKitFrame = NSRect(
             x: cgFrame.origin.x,
             y: screenHeight - cgFrame.origin.y - cgFrame.height,
@@ -44,16 +31,5 @@ class HighlightWindow: NSWindow {
         )
         self.setFrame(appKitFrame, display: true)
         self.orderFront(nil)
-    }
-}
-
-class HighlightBorderView: NSView {
-    override func draw(_ dirtyRect: NSRect) {
-        let insetRect = bounds.insetBy(dx: 2, dy: 2)
-        let path = NSBezierPath(roundedRect: insetRect, xRadius: 8, yRadius: 8)
-
-        path.lineWidth = 3
-        NSColor.systemBlue.withAlphaComponent(0.7).setStroke()
-        path.stroke()
     }
 }
