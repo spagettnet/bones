@@ -27,7 +27,9 @@ class ChatController {
     private(set) var uiMessages: [ChatMessageUI] = []
     private let targetContext: TargetContext
     private let windowTracker: WindowTracker
+    private let widgetManager: WidgetManager?
     private var isProcessing = false
+    var isBusy: Bool { isProcessing }
 
     private let systemPrompt = """
         You are an AI assistant that can see and interact with the user's screen. \
@@ -37,12 +39,20 @@ class ChatController {
         logical window size. For example, if a button appears at pixel (400, 300) in the screenshot, \
         pass x=400, y=300 to the click tool. \
         Always briefly describe what you see before and after taking actions.
+
+        You can also show floating widgets to provide contextual tools and information. \
+        When you see something useful — like a color value, JSON data, a code snippet, or \
+        complex information — proactively use show_widget to spawn a helpful panel near it. \
+        Types: color_swatch, json_viewer, code_snippet, custom_html (for anything novel). \
+        Don't spam widgets — only show them when genuinely useful. Use dismiss_widget to \
+        remove widgets that are no longer relevant.
         """
 
-    init(apiKey: String, targetContext: TargetContext, windowTracker: WindowTracker) {
+    init(apiKey: String, targetContext: TargetContext, windowTracker: WindowTracker, widgetManager: WidgetManager? = nil) {
         self.client = AnthropicClient(apiKey: apiKey)
         self.targetContext = targetContext
         self.windowTracker = windowTracker
+        self.widgetManager = widgetManager
     }
 
     // MARK: - Tool Definitions
@@ -87,6 +97,36 @@ class ChatController {
                     ],
                     required: ["x", "y", "direction"]
                 )
+            ),
+            ToolDefinition(
+                name: "show_widget",
+                description: "Show a floating widget panel at a position on the target window. Use to display contextual information like color swatches, JSON viewers, code snippets, or custom HTML widgets.",
+                inputSchema: ToolSchema(properties: [:], required: []),
+                rawInputSchema: [
+                    "type": "object",
+                    "properties": [
+                        "widget_id": ["type": "string", "description": "Unique ID for this widget (e.g. 'color1', 'json-data')"],
+                        "type": ["type": "string", "description": "Widget type", "enum": ["color_swatch", "json_viewer", "code_snippet", "custom_html"]],
+                        "x": ["type": "integer", "description": "X position in image pixels (2x retina)"],
+                        "y": ["type": "integer", "description": "Y position in image pixels (2x retina)"],
+                        "title": ["type": "string", "description": "Title for the widget window"],
+                        "config": [
+                            "type": "object",
+                            "description": "Widget configuration. For color_swatch: {color: '#hex'}. For json_viewer: {json: '{...}'}. For code_snippet: {code: '...', language: 'swift'}. For custom_html: {html: '<div>...</div>', width: 300, height: 200}."
+                        ]
+                    ] as [String: Any],
+                    "required": ["widget_id", "type", "x", "y", "title", "config"]
+                ]
+            ),
+            ToolDefinition(
+                name: "dismiss_widget",
+                description: "Dismiss a floating widget panel. Use widget_id='all' to dismiss all widgets.",
+                inputSchema: ToolSchema(
+                    properties: [
+                        "widget_id": ToolProperty(type: "string", description: "ID of widget to dismiss, or 'all' for all widgets", enumValues: nil)
+                    ],
+                    required: ["widget_id"]
+                )
             )
         ]
     }
@@ -110,6 +150,29 @@ class ChatController {
         uiMessages.append(ChatMessageUI(
             id: UUID(), role: .user,
             text: "[Screenshot sent] What do you see?",
+            isStreaming: false
+        ))
+        delegate?.chatControllerDidUpdateMessages(self)
+
+        await sendAndProcessResponse()
+    }
+
+    func injectContentChange(imageData: Data) async {
+        guard !isProcessing else {
+            BoneLog.log("ChatController: skipping content change injection — busy")
+            return
+        }
+
+        let base64 = imageData.base64EncodedString()
+        let userContent: [ContentBlock] = [
+            .image(mediaType: "image/png", base64Data: base64),
+            .text("The window content has changed. Here is the updated view.")
+        ]
+        conversationHistory.append(ChatMessage(role: .user, content: userContent))
+
+        uiMessages.append(ChatMessageUI(
+            id: UUID(), role: .user,
+            text: "[Content changed — new screenshot sent]",
             isStreaming: false
         ))
         delegate?.chatControllerDidUpdateMessages(self)
@@ -275,6 +338,32 @@ class ChatController {
             let result = await InteractionTools.scroll(x: x, y: y, direction: direction, amount: amount, context: currentContext)
             return .toolResult(toolUseId: toolId, content: [.text(result.message)], isError: !result.success)
 
+        case "show_widget":
+            guard let wm = widgetManager else {
+                return .toolResult(toolUseId: toolId, content: [.text("Widget manager not available")], isError: true)
+            }
+            let widgetId = input["widget_id"]?.stringValue ?? "widget-\(UUID().uuidString.prefix(8))"
+            let type = input["type"]?.stringValue ?? "custom_html"
+            let x = input["x"]?.intValue ?? 0
+            let y = input["y"]?.intValue ?? 0
+            let title = input["title"]?.stringValue ?? "Widget"
+            var config: [String: Any] = [:]
+            if case .object(let configObj) = input["config"] {
+                for (k, v) in configObj {
+                    config[k] = jsonValueToAny(v)
+                }
+            }
+            let result = wm.showWidget(id: widgetId, type: type, x: x, y: y, title: title, config: config)
+            return .toolResult(toolUseId: toolId, content: [.text(result.message)], isError: !result.success)
+
+        case "dismiss_widget":
+            guard let wm = widgetManager else {
+                return .toolResult(toolUseId: toolId, content: [.text("Widget manager not available")], isError: true)
+            }
+            let widgetId = input["widget_id"]?.stringValue ?? "all"
+            let result = wm.dismissWidget(id: widgetId)
+            return .toolResult(toolUseId: toolId, content: [.text(result.message)], isError: !result.success)
+
         default:
             return .toolResult(toolUseId: toolId, content: [.text("Unknown tool: \(name)")], isError: true)
         }
@@ -293,6 +382,21 @@ class ChatController {
             result[key] = convertToJSONValue(value)
         }
         return result
+    }
+
+    private func jsonValueToAny(_ value: JSONValue) -> Any {
+        switch value {
+        case .string(let s): return s
+        case .int(let i): return i
+        case .double(let d): return d
+        case .bool(let b): return b
+        case .null: return NSNull()
+        case .array(let arr): return arr.map { jsonValueToAny($0) }
+        case .object(let dict):
+            var result: [String: Any] = [:]
+            for (k, v) in dict { result[k] = jsonValueToAny(v) }
+            return result
+        }
     }
 
     private func convertToJSONValue(_ value: Any) -> JSONValue {

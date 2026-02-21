@@ -6,6 +6,8 @@ class SessionController {
     private var sidebarWindow: SidebarWindow?
     private var chatController: ChatController?
     private var windowTracker: WindowTracker?
+    private var widgetManager: WidgetManager?
+    private var contentChangeDetector: ContentChangeDetector?
 
     func startSession(windowInfo: WindowInfo) async {
         endSession()
@@ -48,26 +50,62 @@ class SessionController {
             retinaScale: 2.0
         )
 
+        let wm = WidgetManager(windowTracker: tracker, targetContext: context)
+        self.widgetManager = wm
+
         let controller = ChatController(
             apiKey: apiKey,
             targetContext: context,
-            windowTracker: tracker
+            windowTracker: tracker,
+            widgetManager: wm
         )
         self.chatController = controller
 
         let sidebar = SidebarWindow(
             chatController: controller,
-            windowTracker: tracker,
             targetBounds: bounds
         )
         self.sidebarWindow = sidebar
 
+        // Fan-out window tracking to both sidebar and widget manager
+        tracker.onBoundsChanged = { [weak sidebar, weak wm] newBounds in
+            let newFrame = SidebarWindow.sidebarFrame(forTargetBounds: newBounds, sidebarWidth: 340)
+            sidebar?.setFrame(newFrame, display: true, animate: false)
+            wm?.targetWindowMoved(newBounds: newBounds)
+        }
+        tracker.onWindowClosed = { [weak self] in
+            self?.endSession()
+        }
+        tracker.startTracking()
+
         sidebar.makeKeyAndOrderFront(nil)
 
+        // Content change detection — auto-screenshot on navigation
+        let detector = ContentChangeDetector(windowID: windowInfo.windowID)
+        detector.onContentChanged = { [weak controller, weak detector] imageData in
+            guard let controller, let detector else { return }
+            guard !controller.isBusy else {
+                BoneLog.log("ContentChangeDetector: chatController busy, skipping injection")
+                return
+            }
+            detector.pause()
+            Task { @MainActor in
+                await controller.injectContentChange(imageData: imageData)
+                detector.resume()
+            }
+        }
+        self.contentChangeDetector = detector
+
         await controller.startWithScreenshot()
+
+        detector.start()
     }
 
     func endSession() {
+        contentChangeDetector?.stop()
+        contentChangeDetector = nil
+        widgetManager?.dismissAll()
+        widgetManager = nil
         sidebarWindow?.close()
         sidebarWindow = nil
         windowTracker?.stopTracking()
