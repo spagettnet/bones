@@ -27,7 +27,10 @@ class StatusBarController: NSObject {
         if event.type == .rightMouseUp {
             showMenu()
         } else {
-            dragController.beginDrag(from: event, statusItem: statusItem)
+            dragController.beginDrag(from: event, statusItem: statusItem) { [weak self] in
+                // Called when user clicks without dragging
+                self?.showMenu()
+            }
         }
     }
 

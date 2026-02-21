@@ -166,6 +166,135 @@ enum ScreenshotCapture {
         }
     }
 
+    /// Capture a screen region to PNG data. This captures everything visible in that region
+    /// including overlays, other windows, etc — unlike captureToData which captures a single window.
+    static func captureRegionToData(rect: CGRect) async -> Data? {
+        do {
+            guard let mainDisplay = NSScreen.main else { return nil }
+
+            let content = try await SCShareableContent.excludingDesktopWindows(
+                false, onScreenWindowsOnly: true
+            )
+            guard let display = content.displays.first(where: {
+                $0.displayID == mainDisplay.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID
+            }) else { return nil }
+
+            let filter = SCContentFilter(display: display, excludingWindows: [])
+            let config = SCStreamConfiguration()
+            config.width = Int(mainDisplay.frame.width) * 2
+            config.height = Int(mainDisplay.frame.height) * 2
+            config.captureResolution = .best
+            config.showsCursor = false
+            // Capture a specific region
+            config.sourceRect = rect
+            config.width = Int(rect.width) * 2
+            config.height = Int(rect.height) * 2
+
+            let cgImage = try await SCScreenshotManager.captureImage(
+                contentFilter: filter, configuration: config
+            )
+
+            let nsImage = NSImage(
+                cgImage: cgImage,
+                size: NSSize(width: rect.width, height: rect.height)
+            )
+
+            guard let tiffData = nsImage.tiffRepresentation,
+                  let bitmapRep = NSBitmapImageRep(data: tiffData),
+                  let pngData = bitmapRep.representation(using: .png, properties: [:])
+            else { return nil }
+
+            return pngData
+        } catch {
+            return nil
+        }
+    }
+
+    /// Annotate an image with numbered labels on interactive elements.
+    /// Returns the annotated PNG data and a legend mapping numbers to labels.
+    static func annotateWithLabels(imageData: Data, elements: [AXElementNode], windowBounds: CGRect, retinaScale: CGFloat) -> (data: Data, legend: String)? {
+        guard let nsImage = NSImage(data: imageData) else { return nil }
+
+        let imageSize = nsImage.size
+        let newImage = NSImage(size: imageSize)
+        newImage.lockFocus()
+
+        // Draw original image
+        nsImage.draw(in: NSRect(origin: .zero, size: imageSize))
+
+        // Draw labels on each element
+        var legend: [String] = []
+        let labelFont = NSFont.systemFont(ofSize: 11, weight: .bold)
+        let labelAttrs: [NSAttributedString.Key: Any] = [
+            .font: labelFont,
+            .foregroundColor: NSColor.white
+        ]
+
+        for (index, element) in elements.enumerated() {
+            guard let frame = element.frame else { continue }
+            let label = element.title ?? element.description ?? element.roleDescription ?? element.role
+            let number = index + 1
+
+            // Convert screen coords to image coords
+            let imgX = (frame.origin.x - windowBounds.origin.x) * retinaScale
+            let imgY = (frame.origin.y - windowBounds.origin.y) * retinaScale
+            let imgW = frame.width * retinaScale
+            let imgH = frame.height * retinaScale
+
+            // Flip Y for AppKit drawing (image coords are top-left, AppKit is bottom-left)
+            let flippedY = imageSize.height - imgY - imgH
+
+            // Draw semi-transparent highlight rectangle
+            let highlightRect = NSRect(x: imgX, y: flippedY, width: imgW, height: imgH)
+            let highlightColor = element.isButton ? NSColor.systemBlue.withAlphaComponent(0.2) : NSColor.systemGreen.withAlphaComponent(0.2)
+            highlightColor.setFill()
+            NSBezierPath(rect: highlightRect).fill()
+
+            // Draw border
+            let borderColor = element.isButton ? NSColor.systemBlue.withAlphaComponent(0.7) : NSColor.systemGreen.withAlphaComponent(0.7)
+            borderColor.setStroke()
+            let borderPath = NSBezierPath(rect: highlightRect)
+            borderPath.lineWidth = 2
+            borderPath.stroke()
+
+            // Draw number badge in top-left corner
+            let badgeText = "\(number)"
+            let textSize = (badgeText as NSString).size(withAttributes: labelAttrs)
+            let badgeWidth = textSize.width + 8
+            let badgeHeight = textSize.height + 4
+            let badgeRect = NSRect(
+                x: imgX,
+                y: flippedY + imgH - badgeHeight,
+                width: badgeWidth,
+                height: badgeHeight
+            )
+
+            // Badge background
+            let badgeColor = element.isButton ? NSColor.systemBlue : NSColor.systemGreen
+            badgeColor.setFill()
+            let badgePath = NSBezierPath(roundedRect: badgeRect, xRadius: 3, yRadius: 3)
+            badgePath.fill()
+
+            // Badge text
+            (badgeText as NSString).draw(
+                at: NSPoint(x: badgeRect.origin.x + 4, y: badgeRect.origin.y + 2),
+                withAttributes: labelAttrs
+            )
+
+            let elementType = element.isButton ? "button" : "input"
+            legend.append("[\(number)] \(elementType): \"\(label)\"")
+        }
+
+        newImage.unlockFocus()
+
+        guard let tiffData = newImage.tiffRepresentation,
+              let bitmapRep = NSBitmapImageRep(data: tiffData),
+              let pngData = bitmapRep.representation(using: .png, properties: [:])
+        else { return nil }
+
+        return (data: pngData, legend: legend.joined(separator: "\n"))
+    }
+
     private static func showError(_ message: String) {
         let alert = NSAlert()
         alert.messageText = "Screenshot Error"

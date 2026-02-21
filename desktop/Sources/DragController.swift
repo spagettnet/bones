@@ -12,7 +12,7 @@ class DragController {
     private lazy var soundEngine = BoneSoundEngine()
     private var breakAnimation: BoneBreakAnimation?
 
-    func beginDrag(from event: NSEvent, statusItem: NSStatusItem) {
+    func beginDrag(from event: NSEvent, statusItem: NSStatusItem, onClickWithoutDrag: (() -> Void)? = nil) {
         guard let buttonWindow = statusItem.button?.window else { return }
         let startPoint = NSEvent.mouseLocation
         isDragging = false
@@ -43,7 +43,6 @@ class DragController {
                 if isDragging {
                     dragWindow?.followMouse(at: currentPoint)
                     updateHighlight(at: currentPoint)
-                    // Play rattle sound based on bone velocity
                     let velocity = dragWindow?.skeletonView.physics.currentVelocity() ?? 0
                     soundEngine.playRattleIfNeeded(velocity: velocity)
                 }
@@ -52,9 +51,7 @@ class DragController {
                 if isDragging {
                     handleDrop(at: NSEvent.mouseLocation)
                 } else {
-                    Task { @MainActor in
-                        await ScreenshotCapture.captureFullScreen()
-                    }
+                    onClickWithoutDrag?()
                 }
                 keepTracking = false
 

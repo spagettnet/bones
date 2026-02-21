@@ -45,6 +45,50 @@ struct AXElementNode {
         role == "AXSearchField" || role == "AXSecureTextField"
     }
 
+    func toJSON() -> [String: Any] {
+        var obj: [String: Any] = ["role": role]
+        if let t = title { obj["title"] = t }
+        if let d = description { obj["description"] = d }
+        if let v = value { obj["value"] = v }
+        if let f = frame {
+            obj["frame"] = ["x": f.origin.x, "y": f.origin.y, "w": f.width, "h": f.height]
+        }
+        obj["isButton"] = isButton
+        obj["isInput"] = isInputField
+        if !children.isEmpty {
+            obj["children"] = children.map { $0.toJSON() }
+        }
+        return obj
+    }
+
+    /// The best human-readable label for this element
+    var bestLabel: String? {
+        title ?? description ?? roleDescription
+    }
+
+    /// Search the tree recursively for elements matching a query string.
+    /// Matches against role, title, description, roleDescription, value, and subrole.
+    /// Returns all matching nodes with clickable frames.
+    func search(query: String) -> [AXElementNode] {
+        var results: [AXElementNode] = []
+        searchRecursive(query: query.lowercased(), results: &results)
+        return results
+    }
+
+    private func searchRecursive(query: String, results: inout [AXElementNode]) {
+        let fields = [role, title, description, roleDescription, value, subrole]
+        let matches = fields.contains { field in
+            guard let f = field else { return false }
+            return f.lowercased().contains(query)
+        }
+        if matches {
+            results.append(self)
+        }
+        for child in children {
+            child.searchRecursive(query: query, results: &results)
+        }
+    }
+
     func collectInteractable() -> (buttons: [AXElementNode], inputs: [AXElementNode]) {
         var buttons: [AXElementNode] = []
         var inputs: [AXElementNode] = []

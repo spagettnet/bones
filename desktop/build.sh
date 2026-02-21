@@ -57,7 +57,23 @@ swiftc \
     Sources/ChatController.swift \
     Sources/AnthropicClient.swift \
     Sources/KeychainHelper.swift \
-    Sources/InteractionTools.swift
+    Sources/InteractionTools.swift \
+    Sources/OverlayManager.swift \
+    Sources/OverlayUIWindow.swift \
+    Sources/Tools/ToolProtocol.swift \
+    Sources/Tools/ScreenshotTool.swift \
+    Sources/Tools/ClickTool.swift \
+    Sources/Tools/TypeTextTool.swift \
+    Sources/Tools/ScrollTool.swift \
+    Sources/Tools/FindElementsTool.swift \
+    Sources/Tools/GetAccessibilityTreeTool.swift \
+    Sources/Tools/GetButtonsTool.swift \
+    Sources/Tools/GetInputFieldsTool.swift \
+    Sources/Tools/ClickElementTool.swift \
+    Sources/Tools/TypeIntoFieldTool.swift \
+    Sources/Tools/CreateOverlayTool.swift \
+    Sources/Tools/UpdateOverlayTool.swift \
+    Sources/Tools/DestroyOverlayTool.swift
 
 echo "==> Copying Info.plist..."
 cp Info.plist "${CONTENTS}/Info.plist"

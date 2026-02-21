@@ -36,6 +36,10 @@ enum JSONValue {
         if case .double(let d) = self { return Int(d) }
         return nil
     }
+    var boolValue: Bool? {
+        if case .bool(let b) = self { return b }
+        return nil
+    }
 }
 
 struct ToolDefinition {

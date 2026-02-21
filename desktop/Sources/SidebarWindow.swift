@@ -13,6 +13,7 @@ class SidebarWindow: NSPanel, ChatControllerDelegate {
     private var inputField: NSTextField!
     private var webViewReady = false
     private var pendingUpdate: [ChatMessageUI]?
+    private var escMonitor: Any?
 
     init(chatController: ChatController, windowTracker: WindowTracker, targetBounds: CGRect) {
         self.chatController = chatController
@@ -36,16 +37,18 @@ class SidebarWindow: NSPanel, ChatControllerDelegate {
 
         setupUI()
         setupWindowTracking()
+        setupEscMonitor()
         chatController.delegate = self
     }
 
     // MARK: - Positioning
 
     static func sidebarFrame(forTargetBounds cgBounds: CGRect, sidebarWidth: CGFloat) -> NSRect {
-        guard let screen = NSScreen.main else {
+        // CG coords use primary screen as reference — must use screens[0], not .main
+        guard let primaryScreen = NSScreen.screens.first else {
             return NSRect(x: 100, y: 100, width: sidebarWidth, height: 500)
         }
-        let screenHeight = screen.frame.height
+        let screenHeight = primaryScreen.frame.height
         let appKitY = screenHeight - cgBounds.origin.y - cgBounds.height
         return NSRect(
             x: cgBounds.origin.x + cgBounds.width + 4,
@@ -354,9 +357,35 @@ class SidebarWindow: NSPanel, ChatControllerDelegate {
         webView.evaluateJavaScript("updateMessages('\(escaped)')")
     }
 
+    // MARK: - ESC to Cancel
+
+    private func setupEscMonitor() {
+        escMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            if event.keyCode == 53, let self = self, self.chatController.isCurrentlyProcessing {
+                self.chatController.cancelProcessing()
+                return nil // consume the event
+            }
+            return event
+        }
+    }
+
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 53 { // ESC key
+            chatController.cancelProcessing()
+            return
+        }
+        super.keyDown(with: event)
+    }
+
+    override var acceptsFirstResponder: Bool { true }
+
     // MARK: - Cleanup
 
     override func close() {
+        if let monitor = escMonitor {
+            NSEvent.removeMonitor(monitor)
+            escMonitor = nil
+        }
         ActiveAppState.shared.debugVisible = false
         InteractableOverlayWindow.shared.hideAll()
         windowTracker.stopTracking()
