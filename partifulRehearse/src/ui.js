@@ -38,6 +38,13 @@ export function setupUI(controls) {
     if (chatOpen) {
       hideChat();
       controls.resumeMovement();
+      // Don't show menu — re-lock on next click
+      const reLock = () => {
+        controls.controls.lock();
+        document.removeEventListener('click', reLock);
+      };
+      document.addEventListener('click', reLock);
+      return;
     }
     if (!dialogueOpen) {
       instructions.style.display = 'flex';
