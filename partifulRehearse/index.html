@@ -48,6 +48,9 @@
     .location-card[data-location="custom"] {
       background: linear-gradient(135deg, #0f2b1a 0%, #1a4a2e 100%);
     }
+    .location-card[data-location="judges"] {
+      background: linear-gradient(135deg, #2a1a0f 0%, #4e3b1b 100%);
+    }
 
     .location-card .card-title {
       font-size: 1.8rem;
@@ -474,6 +477,10 @@
       <div class="card-title">Custom Party</div>
       <div class="card-subtitle">Bring your own guest list</div>
     </div>
+    <div class="location-card" data-location="judges">
+      <div class="card-title">Meet the Judges</div>
+      <div class="card-subtitle">AI Tinkerers demo night</div>
+    </div>
   </div>
 
   <div id="profile-input">
@@ -522,7 +529,7 @@ Coffee enthusiast"></textarea>
     <div class="chat-bottom">
       <input type="text" id="chat-input" placeholder="Say something..." autocomplete="off" />
     </div>
-    <div class="chat-dismiss">Escape to close</div>
+    <div class="chat-dismiss">⌘E to close</div>
   </div>
 
   <script type="module" src="/src/main.js"></script>

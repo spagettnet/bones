@@ -24,12 +24,43 @@ const launchBtn = document.getElementById('launch-party');
 // Pre-fill saved API key
 apiKeyInput.value = getApiKey();
 
+const JUDGE_PROFILES = [
+  {
+    name: 'Jonathan Murray',
+    headline: 'Building AI Tinkerers in NYC and beyond',
+    context: 'NYC GM of AI Tinkerers, Managing Partner at 10by10 Group LLC, Harvard Business School Online. Organizes the best community of founders and builders tinkering on the bleeding edge of LLMs and generative AI.',
+    photoURL: '/judges/jonathan.jpg',
+  },
+  {
+    name: 'Jiahe Xiao',
+    headline: 'Staff Software Engineer at Anthropic',
+    context: 'Member of Technical Staff at Anthropic, previously at Block/Cash App, Robinhood, and Amazon. UVA CS + Biology, Stanford AI & Deep Generative Models certs. Full-stack engineer specializing in distributed systems.',
+    photoURL: '/judges/jiahe.jpg',
+  },
+];
+
 cards.forEach(card => {
   card.addEventListener('click', () => {
     const loc = card.dataset.location;
     if (loc === 'custom') {
       hidePicker();
       profileInput.style.display = 'flex';
+      return;
+    }
+    if (loc === 'judges') {
+      hidePicker();
+      setProfiles(JUDGE_PROFILES);
+      if (getApiKey()) {
+        loadLocation('custom');
+      } else {
+        // Show profile-input with just the API key field
+        profilesTextarea.style.display = 'none';
+        document.querySelector('#profile-input h2').textContent = 'Meet the Judges';
+        document.querySelector('#profile-input .hint').textContent = 'Enter your Claude API key to start.';
+        startBtn.textContent = 'Launch';
+        startBtn.dataset.judges = 'true';
+        profileInput.style.display = 'flex';
+      }
       return;
     }
     loadLocation(loc);
@@ -46,12 +77,6 @@ profileBack.addEventListener('click', () => {
 startBtn.addEventListener('click', async () => {
   parseError.textContent = '';
 
-  const raw = profilesTextarea.value.trim();
-  if (!raw) {
-    parseError.textContent = 'Paste at least one profile.';
-    return;
-  }
-
   const key = apiKeyInput.value.trim();
   if (!key) {
     parseError.textContent = 'Enter your Claude API key.';
@@ -59,6 +84,25 @@ startBtn.addEventListener('click', async () => {
   }
 
   setApiKey(key);
+
+  // Judges flow — profiles already set, skip parsing
+  if (startBtn.dataset.judges === 'true') {
+    profileInput.style.display = 'none';
+    // Reset UI state for next time
+    startBtn.dataset.judges = '';
+    startBtn.textContent = 'Start Party';
+    profilesTextarea.style.display = '';
+    document.querySelector('#profile-input h2').textContent = "Who's coming to the party?";
+    document.querySelector('#profile-input .hint').textContent = 'Paste LinkedIn profiles separated by blank lines. First line = name, second = headline.';
+    loadLocation('custom');
+    return;
+  }
+
+  const raw = profilesTextarea.value.trim();
+  if (!raw) {
+    parseError.textContent = 'Paste at least one profile.';
+    return;
+  }
 
   startBtn.disabled = true;
   startBtn.textContent = 'Reading profiles...';
