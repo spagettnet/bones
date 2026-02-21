@@ -1,4 +1,4 @@
-# Draggable Helper
+# Bones
 
 A macOS tool suite for interacting with app windows via a menu bar "little guy" character. Drag him onto a window to screenshot it, click him for a fullscreen capture. Future: an AI agent sidebar that processes screenshots and builds dynamic UI overlays for interacting with any app.
 
@@ -19,7 +19,7 @@ Native macOS app, no Xcode project. Built with `swiftc` directly.
 ```bash
 cd desktop
 ./build.sh
-open build/DraggableHelper.app
+open build/Bones.app
 ```
 
 ### Key Files

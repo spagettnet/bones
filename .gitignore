@@ -1,6 +1,7 @@
 # Build outputs
 desktop/build/
 *.app
+build/
 
 # macOS
 .DS_Store

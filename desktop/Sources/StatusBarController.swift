@@ -30,7 +30,7 @@ class StatusBarController: NSObject {
 
     private func showMenu() {
         let menu = NSMenu()
-        menu.addItem(withTitle: "About Draggable Helper", action: #selector(showAbout), keyEquivalent: "")
+        menu.addItem(withTitle: "About Bones", action: #selector(showAbout), keyEquivalent: "")
             .target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit", action: #selector(quit), keyEquivalent: "q")
@@ -42,7 +42,7 @@ class StatusBarController: NSObject {
 
     @objc private func showAbout() {
         let alert = NSAlert()
-        alert.messageText = "Draggable Helper"
+        alert.messageText = "Bones"
         alert.informativeText = "Drag the little guy onto any window to screenshot it.\n\nLeft-click + drag: Screenshot a window\nRight-click: This menu"
         alert.alertStyle = .informational
         alert.runModal()
