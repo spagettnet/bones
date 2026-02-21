@@ -63,3 +63,4 @@ open build/Bones.app
 - Each top-level directory is a self-contained package with its own build tooling
 - Shared types/protocols go in a `shared/` directory if/when needed
 - Screenshots are saved to `~/Desktop` with format: `Screenshot - {source} - {timestamp}.png`
+- Do NOT add `Co-Authored-By` lines to git commits
