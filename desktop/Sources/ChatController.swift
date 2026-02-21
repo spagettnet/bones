@@ -125,6 +125,9 @@ class ChatController {
                         "widget_id": ToolProperty(type: "string", description: "ID of widget to dismiss, or 'all' for all widgets", enumValues: nil)
                     ],
                     required: ["widget_id"]
+                )
+            ),
+            ToolDefinition(
                 name: "read_editor_content",
                 description: "Read the full text content from the focused text area or code editor in the target window. Returns the complete file/document text, not just what's visible on screen. Use this on code editors (VS Code, Cursor, Xcode, etc.) to get the actual source code.",
                 inputSchema: ToolSchema(properties: [:], required: [])
