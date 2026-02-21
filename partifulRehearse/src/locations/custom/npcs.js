@@ -4,7 +4,7 @@ import { getProfiles } from '../../customPartyState.js';
 const SAFE_POSITIONS = [
   [-4.5, 0, -6.5],
   [-9.5, 0, 0.5],
-  [10, 0, 3.5],
+  [7, 0, 5],
   [7, 0, -2],
   [0, 0, 3],
   [5.5, 0, -7.5],

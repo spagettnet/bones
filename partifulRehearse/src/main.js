@@ -28,16 +28,39 @@ const JUDGE_PROFILES = [
   {
     name: 'Jonathan Murray',
     headline: 'Building AI Tinkerers in NYC and beyond',
-    context: 'NYC GM of AI Tinkerers, Managing Partner at 10by10 Group LLC, Harvard Business School Online. Organizes the best community of founders and builders tinkering on the bleeding edge of LLMs and generative AI.',
+    context: 'NYC GM of AI Tinkerers — the best community of founders, builders, and people tinkering on the bleeding edge of LLMs, generative content, and AI. Grew it to 200+ cities, 80,000+ members across 6 continents. Also working on something in stealth since Dec 2024. Managing Partner at 10by10 Group LLC — consulting, investing, and entrepreneurial projects in digital media and product development. Investor and designer at Talkmap. Harvard Business School Online CORe certificate (Business Analytics, Economics, Financial Accounting). General Assembly bootcamp in web/UX design. Skills: strategic relationships, Photoshop, graphic design, video editing, lead generation, event production, demand generation, growth marketing, strategic planning. Two-time Best in Show award winner from American University Literary Society. Based in New York. 2,300+ followers, 500+ connections.',
     photoURL: '/judges/jonathan.jpg',
   },
   {
     name: 'Jiahe Xiao',
     headline: 'Staff Software Engineer at Anthropic',
-    context: 'Member of Technical Staff at Anthropic, previously at Block/Cash App, Robinhood, and Amazon. UVA CS + Biology, Stanford AI & Deep Generative Models certs. Full-stack engineer specializing in distributed systems.',
+    context: 'Member of Technical Staff at Anthropic since Jul 2025. Previously Software Engineer at Block (Cash App) where he led the monthly statement service for 60M customers, built inflow allocation and lending portfolio management services. Before that, Tech Lead at Robinhood leading the life-cycle marketing platform. Software Engineer at Amazon for nearly 4 years — built the creatives management service from scratch, grew it to 5K advertiser accounts globally, led front-end development (React, Redux, Webpack), certified security reviewer across 8 applications, SDE bootcamp instructor. Started career at Epic building a pedigree web app for genetic counselors. UVA double major in CS and Biology, Stanford summer program. Stanford Online certs in Deep Generative Models and AI Principles. Built data visualization tools for College Health Surveillance Network. Speaks Chinese (native) and English. Dean\'s List. Based in New York.',
     photoURL: '/judges/jiahe.jpg',
   },
+  {
+    name: 'Joshua Bailey',
+    headline: 'Marketing (Storyteller) at Tavus',
+    context: 'Just started at Tavus (Feb 2026) building the future of how humans interact with computers through AI Humans. Believes the most powerful growth happens when you make people feel something — builds brands through story-driven content, strategic experimentation, and community-first execution. Previously Marketing Lead at Anam (AI avatars that look and feel human), Creative Advisor at Snov.io, Head of Community Growth at Saleboat, and Head of Marketing at Overpass for 3+ years. Top skills: video production, community development, marketing strategy, content marketing, influencer marketing. Known for viral LinkedIn content — 16,700+ followers, posts regularly get thousands of engagements. Big on hackathons, networking events, and showcasing the human side of AI. Travels with wife Karen and documents it on Usandtheworld. Based in Brooklyn, New York.',
+    photoURL: '/judges/joshua.jpg',
+  },
 ];
+
+// Auto-launch from URL query param (e.g. ?location=judges)
+const urlLocation = new URLSearchParams(window.location.search).get('location');
+if (urlLocation === 'judges') {
+  hidePicker();
+  setProfiles(JUDGE_PROFILES);
+  if (getApiKey()) {
+    loadLocation('custom');
+  } else {
+    profilesTextarea.style.display = 'none';
+    document.querySelector('#profile-input h2').textContent = 'Meet the Judges';
+    document.querySelector('#profile-input .hint').textContent = 'Enter your Claude API key to start.';
+    startBtn.textContent = 'Launch';
+    startBtn.dataset.judges = 'true';
+    profileInput.style.display = 'flex';
+  }
+}
 
 cards.forEach(card => {
   card.addEventListener('click', () => {
