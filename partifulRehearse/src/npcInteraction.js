@@ -109,6 +109,14 @@ export function setupInteraction(camera, npcMeshes, controls, ui) {
       return;
     }
 
+    // Close chat with Cmd+E / Ctrl+E
+    if (e.key.toLowerCase() === 'e' && (e.metaKey || e.ctrlKey) && ui.isChatOpen()) {
+      e.preventDefault();
+      ui.hideChat();
+      controls.resumeMovement();
+      return;
+    }
+
     // Send chat message with Enter
     if (e.key === 'Enter' && ui.isChatOpen()) {
       e.preventDefault();

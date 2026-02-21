@@ -220,10 +220,37 @@ class SidebarWindow: NSPanel, ChatControllerDelegate {
                 color: rgba(128,128,128,0.5);
             }
             @keyframes blink { 50% { opacity: 0; } }
+            .bubble.visualization {
+                max-width: 100%;
+                width: 100%;
+                padding: 0;
+                background: rgba(128, 128, 128, 0.08);
+                border: 1px solid rgba(128, 128, 128, 0.2);
+                overflow: hidden;
+            }
+            .viz-title {
+                font-size: 11px;
+                font-weight: 600;
+                color: rgba(128, 128, 128, 0.7);
+                padding: 6px 10px 4px 10px;
+                border-bottom: 1px solid rgba(128, 128, 128, 0.15);
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+            }
+            .viz-frame {
+                width: 100%;
+                border: none;
+                border-radius: 0 0 12px 12px;
+                min-height: 60px;
+                display: block;
+                background: white;
+            }
             @media (prefers-color-scheme: dark) {
                 .bubble.assistant { background: rgba(255, 255, 255, 0.08); }
                 .bubble code { background: rgba(255, 255, 255, 0.1); }
                 .bubble pre { background: rgba(255, 255, 255, 0.08); }
+                .bubble.visualization { background: rgba(255, 255, 255, 0.04); border-color: rgba(255,255,255,0.1); }
+                .viz-title { color: rgba(255,255,255,0.5); border-bottom-color: rgba(255,255,255,0.08); }
             }
         </style>
         <script>\(markedJS)</script>
@@ -243,11 +270,35 @@ class SidebarWindow: NSPanel, ChatControllerDelegate {
                 var container = document.getElementById('messages');
                 container.innerHTML = '';
                 messages.forEach(function(msg) {
-                    var div = document.createElement('div');
-                    div.className = 'bubble ' + msg.role;
-                    if (msg.isStreaming) div.classList.add('streaming');
-                    div.innerHTML = renderMarkdown(msg.text);
-                    container.appendChild(div);
+                    if (msg.visualizationHTML) {
+                        var div = document.createElement('div');
+                        div.className = 'bubble assistant visualization';
+                        if (msg.visualizationTitle) {
+                            var titleBar = document.createElement('div');
+                            titleBar.className = 'viz-title';
+                            titleBar.textContent = msg.visualizationTitle;
+                            div.appendChild(titleBar);
+                        }
+                        var iframe = document.createElement('iframe');
+                        iframe.className = 'viz-frame';
+                        iframe.sandbox = 'allow-scripts';
+                        iframe.srcdoc = msg.visualizationHTML;
+                        iframe.style.height = '200px';
+                        iframe.onload = function() {
+                            try {
+                                var h = iframe.contentDocument.documentElement.scrollHeight;
+                                iframe.style.height = Math.min(Math.max(h, 60), 600) + 'px';
+                            } catch(e) {}
+                        };
+                        div.appendChild(iframe);
+                        container.appendChild(div);
+                    } else {
+                        var div = document.createElement('div');
+                        div.className = 'bubble ' + msg.role;
+                        if (msg.isStreaming) div.classList.add('streaming');
+                        div.innerHTML = renderMarkdown(msg.text);
+                        container.appendChild(div);
+                    }
                 });
                 window.scrollTo(0, document.body.scrollHeight);
             }
@@ -319,11 +370,18 @@ class SidebarWindow: NSPanel, ChatControllerDelegate {
     private func pushMessagesToWebView(_ messages: [ChatMessageUI]) {
         var jsonMessages: [[String: Any]] = []
         for msg in messages {
-            jsonMessages.append([
+            var entry: [String: Any] = [
                 "role": msg.role == .user ? "user" : "assistant",
                 "text": msg.text,
                 "isStreaming": msg.isStreaming
-            ])
+            ]
+            if let vizHTML = msg.visualizationHTML {
+                entry["visualizationHTML"] = vizHTML
+            }
+            if let vizTitle = msg.visualizationTitle {
+                entry["visualizationTitle"] = vizTitle
+            }
+            jsonMessages.append(entry)
         }
 
         guard let data = try? JSONSerialization.data(withJSONObject: jsonMessages),

@@ -61,6 +61,14 @@ struct AXElementNode {
     }
 }
 
+struct TextContentResult {
+    let text: String
+    let characterCount: Int
+    let role: String
+    let title: String?
+    let wasTruncated: Bool
+}
+
 @MainActor
 enum AccessibilityHelper {
 
@@ -71,6 +79,75 @@ enum AccessibilityHelper {
     static func requestPermission() {
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
         AXIsProcessTrustedWithOptions(options)
+    }
+
+    static func readTextContent(pid: pid_t, bounds: CGRect) -> [TextContentResult] {
+        guard let window = findAXWindow(pid: pid, matchingBounds: bounds) else {
+            BoneLog.log("AccessibilityHelper: readTextContent — no AX window found")
+            return []
+        }
+
+        var results: [TextContentResult] = []
+        collectTextAreas(element: window, results: &results, depth: 0, maxDepth: 20)
+
+        BoneLog.log("AccessibilityHelper: readTextContent — found \(results.count) text area(s)")
+        return results
+    }
+
+    private static func collectTextAreas(element: AXUIElement, results: inout [TextContentResult], depth: Int, maxDepth: Int) {
+        guard depth <= maxDepth else { return }
+        AXUIElementSetMessagingTimeout(element, 0.5)
+
+        let role = stringAttribute(of: element, attribute: kAXRoleAttribute as CFString) ?? ""
+
+        if role == "AXTextArea" {
+            let title = stringAttribute(of: element, attribute: kAXTitleAttribute as CFString)
+
+            // Read full value without truncation
+            var valRef: CFTypeRef?
+            var text = ""
+            if AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &valRef) == .success,
+               let val = valRef as? String {
+                text = val
+            }
+
+            // Also try kAXNumberOfCharactersAttribute
+            var charCount = text.count
+            var countRef: CFTypeRef?
+            if AXUIElementCopyAttributeValue(element, "AXNumberOfCharacters" as CFString, &countRef) == .success,
+               let num = countRef as? Int {
+                charCount = num
+            }
+
+            let maxChars = 100_000
+            let wasTruncated = text.count > maxChars
+            if wasTruncated {
+                text = String(text.prefix(maxChars))
+            }
+
+            if !text.isEmpty {
+                results.append(TextContentResult(
+                    text: text,
+                    characterCount: charCount,
+                    role: role,
+                    title: title,
+                    wasTruncated: wasTruncated
+                ))
+            }
+        }
+
+        // Recurse into children
+        var childrenRef: CFTypeRef?
+        if AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &childrenRef) == .success,
+           let children = childrenRef as? [AXUIElement] {
+            for child in children {
+                collectTextAreas(element: child, results: &results, depth: depth + 1, maxDepth: maxDepth)
+                // Stop after finding a substantial text area to avoid duplicates
+                if let last = results.last, last.characterCount > 100 {
+                    return
+                }
+            }
+        }
     }
 
     static func elementAtPosition(_ point: CGPoint) -> AXElementNode? {

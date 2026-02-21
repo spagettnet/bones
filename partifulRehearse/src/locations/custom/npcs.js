@@ -28,19 +28,22 @@ function pick(arr, i) { return arr[i % arr.length]; }
 
 function generateNPCData() {
   const profiles = getProfiles();
-  return profiles.map((p, i) => ({
+  return profiles.map((p, i) => {
+    const vi = i >= 1 ? i + 1 : i; // skip visual index 1
+    return {
     id: `custom-${i}`,
     name: p.name,
-    color: pick(COLOR_POOL, i),
-    skinColor: pick(SKIN_POOL, i + 3),
+    color: pick(COLOR_POOL, vi),
+    skinColor: pick(SKIN_POOL, vi + 3),
     position: SAFE_POSITIONS[i % SAFE_POSITIONS.length],
     rotationY: Math.PI * (0.3 + i * 0.4),
-    build: pick(BUILD_POOL, i),
-    accessory: pick(ACCESSORY_POOL, i),
+    build: pick(BUILD_POOL, vi),
+    accessory: pick(ACCESSORY_POOL, vi),
     photoURL: p.photoURL || null,
     isLLM: true,
-    systemPrompt: `You are ${p.name} at a house party. Background: ${p.headline}${p.context ? ', ' + p.context : ''}. You're chatting with someone you just met. Keep it casual and real — sometimes just a few words, sometimes a sentence or two. Vary your length a lot. Short quips, half-thoughts, trailing off, quick reactions like "hah yeah" or "oh wait really?" are all good. Never monologue. Match the energy of the conversation. Stay in character.`,
-  }));
+    systemPrompt: `You are ${p.name} at a house party. Background: ${p.headline}${p.context ? ', ' + p.context : ''}. You're chatting with someone you just met. CRITICAL RULE: Never use asterisks. Never write action descriptions like *smiles* or *nods* or *laughs*. Never use roleplay formatting. Output only spoken words, nothing else. Talk like a normal person — not too eager, not too stiff. Keep it casual — sometimes just a few words, sometimes a sentence or two. Vary your length a lot. Short quips, half-thoughts, trailing off, quick reactions like "hah yeah" or "oh wait really?" are all good. Never monologue. Match the energy of the conversation. Stay in character.`,
+  };
+  });
 }
 
 // Create a circular face texture from an image URL
@@ -68,11 +71,22 @@ function loadFaceTexture(url) {
       const h = img.height * scale;
       ctx.drawImage(img, (size - w) / 2, (size - h) / 2, w, h);
 
+      // Sample top strip of the circular crop to extract hair color
+      const strip = ctx.getImageData(64, 5, 128, 20).data;
+      let r = 0, g = 0, b = 0, count = 0;
+      for (let i = 0; i < strip.length; i += 4) {
+        if (strip[i + 3] > 128) { // only opaque pixels (inside circle clip)
+          r += strip[i]; g += strip[i + 1]; b += strip[i + 2]; count++;
+        }
+      }
+      if (count > 0) { r /= count; g /= count; b /= count; }
+      const hairColor = (Math.round(r) << 16) | (Math.round(g) << 8) | Math.round(b);
+
       const texture = new THREE.CanvasTexture(canvas);
       texture.colorSpace = THREE.SRGBColorSpace;
-      resolve(texture);
+      resolve({ texture, hairColor });
     };
-    img.onerror = () => resolve(null);
+    img.onerror = () => resolve({ texture: null, hairColor: null });
     img.src = url;
   });
 }
@@ -135,12 +149,20 @@ export function createNPCs(scene) {
       faceMesh.position.set(0, head.position.y, headR + 0.01);
       group.add(faceMesh);
 
-      // Load texture async and apply
-      loadFaceTexture(data.photoURL).then(tex => {
+      // Load texture async, apply face photo, and add hair mesh
+      const headY = head.position.y;
+      loadFaceTexture(data.photoURL).then(({ texture: tex, hairColor }) => {
         if (tex) {
           faceMat.map = tex;
           faceMat.opacity = 1;
           faceMat.needsUpdate = true;
+        }
+        if (hairColor != null) {
+          const hairGeo = new THREE.SphereGeometry(headR + 0.02, 16, 12, 0, Math.PI * 2, 0, Math.PI * 0.5);
+          const hairMat = new THREE.MeshStandardMaterial({ color: hairColor, roughness: 0.7 });
+          const hairMesh = new THREE.Mesh(hairGeo, hairMat);
+          hairMesh.position.set(0, headY + 0.02, -0.04);
+          group.add(hairMesh);
         }
       });
     }
