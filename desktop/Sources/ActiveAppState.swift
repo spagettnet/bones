@@ -200,6 +200,7 @@ class ActiveAppState {
         }
 
         InteractableOverlayWindow.shared.updateOverlays()
+        ElementLabeler.shared.relabel()
     }
 }
 

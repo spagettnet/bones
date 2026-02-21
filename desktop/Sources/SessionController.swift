@@ -4,7 +4,7 @@ import CoreGraphics
 @MainActor
 class SessionController {
     private var sidebarWindow: SidebarWindow?
-    private var chatController: ChatController?
+    private var agentBridge: AgentBridge?
     private var windowTracker: WindowTracker?
     private var overlayManager: OverlayManager?
 
@@ -46,22 +46,6 @@ class SessionController {
         let overlay = OverlayManager()
         self.overlayManager = overlay
 
-        // Create tool registry with all tools
-        let registry = ToolRegistry()
-        registry.register(ScreenshotTool())
-        registry.register(ClickTool())
-        registry.register(TypeTextTool())
-        registry.register(ScrollTool())
-        registry.register(FindElementsTool())
-        registry.register(GetAccessibilityTreeTool())
-        registry.register(GetButtonsTool())
-        registry.register(GetInputFieldsTool())
-        registry.register(ClickElementTool())
-        registry.register(TypeIntoFieldTool())
-        registry.register(CreateOverlayTool())
-        registry.register(UpdateOverlayTool())
-        registry.register(DestroyOverlayTool())
-
         // Build execution context
         let execContext = ToolExecutionContext(
             windowID: windowInfo.windowID,
@@ -80,26 +64,12 @@ class SessionController {
             }
         }
 
-        // Create chat controller
-        let controller = ChatController(
-            apiKey: apiKey,
-            executionContext: execContext,
-            toolRegistry: registry
-        )
-        controller.systemPrompt += """
-
-            \nYou also have overlay tools. You can create dynamic HTML/CSS/JS UI overlays that float \
-            above the target window. Overlays have access to window.bones.* APIs that can interact \
-            with the target app — including taking screenshots, clicking, typing, and reading the \
-            accessibility tree. Use create_overlay to build interactive tools, dashboards, or controls. \
-            Use update_overlay to modify them, and destroy_overlay to remove them. \
-            Use take_screenshot with target="overlay" to see your overlay, or target="both" to see \
-            the app and overlay together.
-            """
-        self.chatController = controller
+        // Create agent bridge
+        let bridge = AgentBridge(executionContext: execContext, overlayManager: overlay)
+        self.agentBridge = bridge
 
         let sidebar = SidebarWindow(
-            chatController: controller,
+            agentBridge: bridge,
             windowTracker: tracker,
             targetBounds: bounds
         )
@@ -107,24 +77,25 @@ class SessionController {
 
         sidebar.makeKeyAndOrderFront(nil)
 
-        await controller.startWithScreenshot()
+        await bridge.start(apiKey: apiKey)
     }
 
     func endSession() {
+        agentBridge?.stop()
         overlayManager?.destroyOverlay()
         overlayManager = nil
         sidebarWindow?.close()
         sidebarWindow = nil
         windowTracker?.stopTracking()
         windowTracker = nil
-        chatController = nil
+        agentBridge = nil
     }
 
     func toggleDebugTab() {
         sidebarWindow?.toggleDebugTab()
     }
 
-    // MARK: - Bridge Action Handler
+    // MARK: - Bridge Action Handler (for overlay window.bones.* API)
 
     private func handleBridgeAction(action: String, payload: [String: Any], callbackId: String, context: ToolExecutionContext) async {
         guard let overlay = overlayManager else { return }
@@ -212,8 +183,6 @@ class SessionController {
             let label = payload["label"] as? String ?? ""
             if let element = findElementByLabel(label, in: ActiveAppState.shared.buttons),
                let frame = element.frame {
-                // Click center of element using screen coordinates (not image pixels)
-                // InteractionTools expects image-pixel coords, so multiply by retina scale
                 let centerX = Int((frame.origin.x - context.bounds.origin.x) * context.retinaScale + frame.width * context.retinaScale / 2)
                 let centerY = Int((frame.origin.y - context.bounds.origin.y) * context.retinaScale + frame.height * context.retinaScale / 2)
                 let result = await InteractionTools.click(x: centerX, y: centerY, context: context.targetContext)
@@ -229,7 +198,6 @@ class SessionController {
                let frame = element.frame {
                 let centerX = Int((frame.origin.x - context.bounds.origin.x) * context.retinaScale + frame.width * context.retinaScale / 2)
                 let centerY = Int((frame.origin.y - context.bounds.origin.y) * context.retinaScale + frame.height * context.retinaScale / 2)
-                // Click the field first, then type
                 _ = await InteractionTools.click(x: centerX, y: centerY, context: context.targetContext)
                 let result = await InteractionTools.typeText(text, context: context.targetContext)
                 overlay.sendBridgeResponse(callbackId: callbackId, result: ["success": result.success, "message": result.message])

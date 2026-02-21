@@ -295,6 +295,139 @@ enum ScreenshotCapture {
         return (data: pngData, legend: legend.joined(separator: "\n"))
     }
 
+    /// Annotate an image with 2-letter Homerow-style codes on each labeled element.
+    /// Returns the annotated PNG data and a legend string.
+    static func annotateWithCodes(imageData: Data, windowBounds: CGRect, retinaScale: CGFloat) -> (data: Data, legend: String)? {
+        guard let nsImage = NSImage(data: imageData) else { return nil }
+        let imageSize = nsImage.size
+        let newImage = NSImage(size: imageSize)
+        newImage.lockFocus()
+
+        nsImage.draw(in: NSRect(origin: .zero, size: imageSize))
+
+        let codeFont = NSFont.systemFont(ofSize: 10, weight: .bold)
+        let codeAttrs: [NSAttributedString.Key: Any] = [
+            .font: codeFont,
+            .foregroundColor: NSColor.white
+        ]
+
+        var legend: [String] = []
+        let elements = ElementLabeler.shared.labeledElements.values.sorted { $0.code < $1.code }
+
+        for elem in elements {
+            let frame = elem.screenFrame
+
+            // Convert screen coords to image coords
+            let imgX = (frame.origin.x - windowBounds.origin.x) * retinaScale
+            let imgY = (frame.origin.y - windowBounds.origin.y) * retinaScale
+            let imgW = frame.width * retinaScale
+            let imgH = frame.height * retinaScale
+
+            // Flip Y for AppKit drawing
+            let flippedY = imageSize.height - imgY - imgH
+
+            // Draw subtle border
+            let borderColor = elem.node.isButton
+                ? NSColor.systemOrange.withAlphaComponent(0.6)
+                : NSColor.systemTeal.withAlphaComponent(0.6)
+            borderColor.setStroke()
+            let borderPath = NSBezierPath(rect: NSRect(x: imgX, y: flippedY, width: imgW, height: imgH))
+            borderPath.lineWidth = 1.5
+            borderPath.stroke()
+
+            // Draw code badge in top-left corner
+            let textSize = (elem.code as NSString).size(withAttributes: codeAttrs)
+            let badgeW = textSize.width + 6
+            let badgeH = textSize.height + 3
+            let badgeRect = NSRect(
+                x: imgX,
+                y: flippedY + imgH - badgeH,
+                width: badgeW,
+                height: badgeH
+            )
+
+            NSColor.systemOrange.setFill()
+            let badgePath = NSBezierPath(roundedRect: badgeRect, xRadius: 3, yRadius: 3)
+            badgePath.fill()
+
+            (elem.code as NSString).draw(
+                at: NSPoint(x: badgeRect.origin.x + 3, y: badgeRect.origin.y + 1),
+                withAttributes: codeAttrs
+            )
+
+            let label = elem.node.bestLabel ?? elem.node.role
+            let elementType = elem.node.isButton ? "button" : "input"
+            legend.append("[\(elem.code)] \(elementType): \"\(label)\"")
+        }
+
+        newImage.unlockFocus()
+
+        guard let tiffData = newImage.tiffRepresentation,
+              let bitmapRep = NSBitmapImageRep(data: tiffData),
+              let pngData = bitmapRep.representation(using: .png, properties: [:])
+        else { return nil }
+
+        return (data: pngData, legend: legend.joined(separator: "\n"))
+    }
+
+    /// Compress image data to stay under the Anthropic API 5MB limit.
+    /// Returns (data, mediaType) — JPEG if compression needed, original PNG if already small.
+    static func compressForAPI(_ imageData: Data) -> (data: Data, mediaType: String) {
+        let maxBytes = 4_800_000  // slightly under 5MB to leave headroom
+
+        // If PNG is already small enough, keep it
+        if imageData.count <= maxBytes {
+            return (data: imageData, mediaType: "image/png")
+        }
+
+        guard let nsImage = NSImage(data: imageData) else {
+            return (data: imageData, mediaType: "image/png")
+        }
+
+        // Try JPEG at decreasing quality levels
+        guard let tiffData = nsImage.tiffRepresentation,
+              let bitmapRep = NSBitmapImageRep(data: tiffData)
+        else {
+            return (data: imageData, mediaType: "image/png")
+        }
+
+        for quality in [0.7, 0.5, 0.3] {
+            if let jpegData = bitmapRep.representation(
+                using: .jpeg,
+                properties: [.compressionFactor: quality]
+            ), jpegData.count <= maxBytes {
+                BoneLog.log("ScreenshotCapture: compressed \(imageData.count) -> \(jpegData.count) bytes (JPEG q=\(quality))")
+                return (data: jpegData, mediaType: "image/jpeg")
+            }
+        }
+
+        // Still too large — downscale to 50% and try again
+        let halfSize = NSSize(width: nsImage.size.width / 2, height: nsImage.size.height / 2)
+        let resized = NSImage(size: halfSize)
+        resized.lockFocus()
+        nsImage.draw(in: NSRect(origin: .zero, size: halfSize),
+                     from: NSRect(origin: .zero, size: nsImage.size),
+                     operation: .copy, fraction: 1.0)
+        resized.unlockFocus()
+
+        if let tiff2 = resized.tiffRepresentation,
+           let rep2 = NSBitmapImageRep(data: tiff2),
+           let jpegData = rep2.representation(using: .jpeg, properties: [.compressionFactor: 0.6]),
+           jpegData.count <= maxBytes {
+            BoneLog.log("ScreenshotCapture: downscaled+compressed \(imageData.count) -> \(jpegData.count) bytes")
+            return (data: jpegData, mediaType: "image/jpeg")
+        }
+
+        // Last resort — return whatever we have
+        if let tiff2 = resized.tiffRepresentation,
+           let rep2 = NSBitmapImageRep(data: tiff2),
+           let jpegData = rep2.representation(using: .jpeg, properties: [.compressionFactor: 0.3]) {
+            return (data: jpegData, mediaType: "image/jpeg")
+        }
+
+        return (data: imageData, mediaType: "image/png")
+    }
+
     private static func showError(_ message: String) {
         let alert = NSAlert()
         alert.messageText = "Screenshot Error"

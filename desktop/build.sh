@@ -18,6 +18,9 @@ rm -rf "${BUILD_DIR}"
 echo "==> Creating .app bundle structure..."
 mkdir -p "${MACOS}" "${RESOURCES}"
 
+echo "==> Syncing Python agent dependencies (uv)..."
+(cd ../agent && uv sync --quiet 2>&1) || echo "    WARNING: uv sync failed — agent may not work"
+
 echo "==> Compiling Swift sources..."
 swiftc \
     -o "${MACOS}/${APP_NAME}" \
@@ -60,6 +63,8 @@ swiftc \
     Sources/InteractionTools.swift \
     Sources/OverlayManager.swift \
     Sources/OverlayUIWindow.swift \
+    Sources/AgentBridge.swift \
+    Sources/ElementLabeler.swift \
     Sources/Tools/ToolProtocol.swift \
     Sources/Tools/ScreenshotTool.swift \
     Sources/Tools/ClickTool.swift \
@@ -73,7 +78,8 @@ swiftc \
     Sources/Tools/TypeIntoFieldTool.swift \
     Sources/Tools/CreateOverlayTool.swift \
     Sources/Tools/UpdateOverlayTool.swift \
-    Sources/Tools/DestroyOverlayTool.swift
+    Sources/Tools/DestroyOverlayTool.swift \
+    Sources/Tools/KeyComboTool.swift
 
 echo "==> Copying Info.plist..."
 cp Info.plist "${CONTENTS}/Info.plist"
@@ -85,6 +91,10 @@ if ! codesign --sign "Bones Dev" --force "${APP_BUNDLE}" 2>/dev/null; then
 fi
 echo "==> Copying Resources..."
 cp -r Resources/* "${RESOURCES}/" 2>/dev/null || true
+
+echo "==> Copying Python agent..."
+mkdir -p "${RESOURCES}/agent"
+cp ../agent/agent.py "${RESOURCES}/agent/"
 
 echo "==> Build complete: ${APP_BUNDLE}"
 echo "    Run with: open ${APP_BUNDLE}"

@@ -2,9 +2,9 @@ import AppKit
 import WebKit
 
 @MainActor
-class SidebarWindow: NSPanel, ChatControllerDelegate {
+class SidebarWindow: NSPanel, AgentBridgeDelegate {
     private let sidebarWidth: CGFloat = 340
-    private let chatController: ChatController
+    private let agentBridge: AgentBridge
     private let windowTracker: WindowTracker
     private var tabControl: NSSegmentedControl!
     private var chatContainer: NSView!
@@ -15,8 +15,8 @@ class SidebarWindow: NSPanel, ChatControllerDelegate {
     private var pendingUpdate: [ChatMessageUI]?
     private var escMonitor: Any?
 
-    init(chatController: ChatController, windowTracker: WindowTracker, targetBounds: CGRect) {
-        self.chatController = chatController
+    init(agentBridge: AgentBridge, windowTracker: WindowTracker, targetBounds: CGRect) {
+        self.agentBridge = agentBridge
         self.windowTracker = windowTracker
 
         let frame = Self.sidebarFrame(forTargetBounds: targetBounds, sidebarWidth: sidebarWidth)
@@ -38,7 +38,7 @@ class SidebarWindow: NSPanel, ChatControllerDelegate {
         setupUI()
         setupWindowTracking()
         setupEscMonitor()
-        chatController.delegate = self
+        agentBridge.delegate = self
     }
 
     // MARK: - Positioning
@@ -295,9 +295,7 @@ class SidebarWindow: NSPanel, ChatControllerDelegate {
         let text = inputField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         inputField.stringValue = ""
-        Task {
-            await chatController.sendUserMessage(text)
-        }
+        agentBridge.sendUserMessage(text: text)
     }
 
     @objc private func tabChanged() {
@@ -313,10 +311,10 @@ class SidebarWindow: NSPanel, ChatControllerDelegate {
         tabChanged()
     }
 
-    // MARK: - ChatControllerDelegate
+    // MARK: - AgentBridgeDelegate
 
-    func chatControllerDidUpdateMessages(_ controller: ChatController) {
-        let messages = controller.uiMessages
+    func agentBridgeDidUpdateMessages(_ bridge: AgentBridge) {
+        let messages = bridge.uiMessages
         if webViewReady {
             pushMessagesToWebView(messages)
         } else {
@@ -324,9 +322,9 @@ class SidebarWindow: NSPanel, ChatControllerDelegate {
         }
     }
 
-    func chatControllerDidEncounterError(_ controller: ChatController, error: String) {
+    func agentBridgeDidEncounterError(_ bridge: AgentBridge, error: String) {
         let alert = NSAlert()
-        alert.messageText = "Chat Error"
+        alert.messageText = "Agent Error"
         alert.informativeText = error
         alert.alertStyle = .warning
         alert.runModal()
@@ -361,8 +359,8 @@ class SidebarWindow: NSPanel, ChatControllerDelegate {
 
     private func setupEscMonitor() {
         escMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            if event.keyCode == 53, let self = self, self.chatController.isCurrentlyProcessing {
-                self.chatController.cancelProcessing()
+            if event.keyCode == 53, let self = self, self.agentBridge.isRunning {
+                self.agentBridge.stop()
                 return nil // consume the event
             }
             return event
@@ -371,7 +369,7 @@ class SidebarWindow: NSPanel, ChatControllerDelegate {
 
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 53 { // ESC key
-            chatController.cancelProcessing()
+            agentBridge.stop()
             return
         }
         super.keyDown(with: event)
@@ -382,6 +380,7 @@ class SidebarWindow: NSPanel, ChatControllerDelegate {
     // MARK: - Cleanup
 
     override func close() {
+        agentBridge.stop()
         if let monitor = escMonitor {
             NSEvent.removeMonitor(monitor)
             escMonitor = nil

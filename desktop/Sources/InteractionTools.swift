@@ -111,6 +111,69 @@ enum InteractionTools {
         return ToolResult(success: true, message: "Scrolled \(direction) by \(amount)")
     }
 
+    static func keyCombo(keys: [String], context: TargetContext) async -> ToolResult {
+        bringToFront(pid: context.ownerPID)
+        try? await Task.sleep(nanoseconds: 100_000_000)
+
+        // Separate modifiers from the main key
+        var flags: CGEventFlags = []
+        var mainKeyName: String?
+
+        for key in keys {
+            switch key.lowercased() {
+            case "cmd", "command":
+                flags.insert(.maskCommand)
+            case "ctrl", "control":
+                flags.insert(.maskControl)
+            case "shift":
+                flags.insert(.maskShift)
+            case "alt", "option":
+                flags.insert(.maskAlternate)
+            default:
+                mainKeyName = key.lowercased()
+            }
+        }
+
+        guard let keyName = mainKeyName, let keyCode = keyCodeForName(keyName) else {
+            return ToolResult(success: false, message: "No valid key found in: \(keys)")
+        }
+
+        guard let keyDown = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: true),
+              let keyUp = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: false)
+        else {
+            return ToolResult(success: false, message: "Failed to create keyboard events")
+        }
+
+        keyDown.flags = flags
+        keyUp.flags = flags
+        keyDown.post(tap: .cghidEventTap)
+        keyUp.post(tap: .cghidEventTap)
+
+        try? await Task.sleep(nanoseconds: 200_000_000)
+        return ToolResult(success: true, message: "Pressed key combo: \(keys.joined(separator: "+"))")
+    }
+
+    private static func keyCodeForName(_ name: String) -> UInt16? {
+        let map: [String: UInt16] = [
+            "a": 0, "s": 1, "d": 2, "f": 3, "h": 4, "g": 5, "z": 6, "x": 7,
+            "c": 8, "v": 9, "b": 11, "q": 12, "w": 13, "e": 14, "r": 15,
+            "y": 16, "t": 17, "1": 18, "2": 19, "3": 20, "4": 21, "6": 22,
+            "5": 23, "=": 24, "9": 25, "7": 26, "-": 27, "8": 28, "0": 29,
+            "]": 30, "o": 31, "u": 32, "[": 33, "i": 34, "p": 35,
+            "l": 37, "j": 38, "'": 39, "k": 40, ";": 41, "\\": 42,
+            ",": 43, "/": 44, "n": 45, "m": 46, ".": 47,
+            "return": 36, "enter": 36, "tab": 48, "space": 49,
+            "delete": 51, "backspace": 51, "escape": 53, "esc": 53,
+            "f1": 122, "f2": 120, "f3": 99, "f4": 118, "f5": 96,
+            "f6": 97, "f7": 98, "f8": 100, "f9": 101, "f10": 109,
+            "f11": 103, "f12": 111,
+            "left": 123, "right": 124, "down": 125, "up": 126,
+            "home": 115, "end": 119, "pageup": 116, "pagedown": 121,
+            "forwarddelete": 117, "`": 50
+        ]
+        return map[name]
+    }
+
     static func checkAccessibilityPermission() -> Bool {
         return AXIsProcessTrusted()
     }
