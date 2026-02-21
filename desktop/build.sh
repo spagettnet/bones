@@ -65,6 +65,7 @@ swiftc \
     Sources/OverlayUIWindow.swift \
     Sources/AgentBridge.swift \
     Sources/ElementLabeler.swift \
+    Sources/SiteAppRegistry.swift \
     Sources/Tools/ToolProtocol.swift \
     Sources/Tools/ScreenshotTool.swift \
     Sources/Tools/ClickTool.swift \

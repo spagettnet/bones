@@ -335,6 +335,22 @@ NATIVE_TOOLS = [
             "required": ["html"]
         }
     },
+    {
+        "name": "launch_site_app",
+        "description": (
+            "Launch a pre-built site-specific app for the current webpage. "
+            "These are rich interactive experiences built for specific websites. "
+            "Pass the app_id and optionally the current page URL."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "app_id": {"type": "string", "description": "ID of the site app to launch"},
+                "url": {"type": "string", "description": "Current page URL to pass to the app"}
+            },
+            "required": ["app_id"]
+        }
+    },
 ]
 
 SYSTEM_PROMPT = """\
@@ -418,6 +434,18 @@ class Agent:
                 for e in msg["element_codes"]
             )
             content.append({"type": "text", "text": codes_text})
+        if msg.get("page_url"):
+            content.append({"type": "text", "text": f"Page URL: {msg['page_url']}"})
+        if msg.get("site_apps"):
+            apps_text = "AVAILABLE SITE APPS for this page:\n"
+            for app in msg["site_apps"]:
+                apps_text += f"- {app['name']} (id: {app['id']}): {app['description']}\n"
+            apps_text += (
+                "\nYou should proactively offer to launch these apps for the user. "
+                "Use launch_site_app(app_id='...') to launch. "
+                "Pass the page URL as the 'url' parameter."
+            )
+            content.append({"type": "text", "text": apps_text})
         content.append({
             "type": "text",
             "text": "Here is the current state of the window. What do you see?"

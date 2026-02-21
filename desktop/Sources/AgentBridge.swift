@@ -49,6 +49,22 @@ class AgentBridge {
         }
         let elementCodes = ElementLabeler.shared.codeMap()
 
+        // Detect page URL and matching site apps (browser only)
+        var pageURL = ""
+        var siteApps: [[String: Any]] = []
+        let appName = ActiveAppState.shared.appName
+        if Self.isBrowser(appName) {
+            let urlResult = await InteractionTools.runJavaScriptInBrowser(
+                js: "window.location.href", appName: appName)
+            if urlResult.success && !urlResult.message.isEmpty {
+                pageURL = urlResult.message
+                siteApps = SiteAppRegistry.shared.appsForURL(pageURL).map { app in
+                    ["id": app.id, "name": app.name, "description": app.description] as [String: Any]
+                }
+                BoneLog.log("AgentBridge: page URL=\(pageURL), site apps=\(siteApps.count)")
+            }
+        }
+
         // Find the agent project directory (repo root / agent/)
         // The app bundle is at desktop/build/Bones.app — go up to repo root
         let bundle = Bundle.main
@@ -106,13 +122,19 @@ class AgentBridge {
         startStderrReading()
 
         // Send init message
-        let initMsg: [String: Any] = [
+        var initMsg: [String: Any] = [
             "type": "init",
             "api_key": apiKey,
             "screenshot_base64": screenshotBase64,
             "screenshot_media_type": screenshotMediaType,
             "element_codes": elementCodes
         ]
+        if !pageURL.isEmpty {
+            initMsg["page_url"] = pageURL
+        }
+        if !siteApps.isEmpty {
+            initMsg["site_apps"] = siteApps
+        }
         sendToProcess(initMsg)
     }
 
@@ -495,9 +517,24 @@ class AgentBridge {
             let titleNote = vizTitle.map { ": \($0)" } ?? ""
             return toolResult(id: id, text: "Visualization rendered in sidebar\(titleNote)", isError: false)
 
+        case "launch_site_app":
+            let appId = input["app_id"] as? String ?? ""
+            let pageURL = input["url"] as? String ?? ""
+            let result = await SiteAppRegistry.shared.launch(appId: appId, pageURL: pageURL)
+            return toolResult(id: id, text: result.message, isError: !result.success)
+
         default:
             return toolResult(id: id, text: "Unknown tool: \(name)", isError: true)
         }
+    }
+
+    // MARK: - Helpers
+
+    static func isBrowser(_ name: String) -> Bool {
+        let lower = name.lowercased()
+        return lower.contains("chrome") || lower.contains("safari") || lower.contains("arc")
+            || lower.contains("brave") || lower.contains("edge") || lower.contains("firefox")
+            || lower.contains("vivaldi") || lower.contains("opera")
     }
 
     // MARK: - Tool Implementations
