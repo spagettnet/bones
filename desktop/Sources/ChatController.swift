@@ -8,6 +8,8 @@ struct ChatMessageUI {
     let role: MessageRole
     var text: String
     var isStreaming: Bool
+    var visualizationHTML: String? = nil
+    var visualizationTitle: String? = nil
 }
 
 // MARK: - Delegate
@@ -36,7 +38,11 @@ class ChatController {
         Coordinates in screenshots are in pixel space (2x retina). The image dimensions are 2x the \
         logical window size. For example, if a button appears at pixel (400, 300) in the screenshot, \
         pass x=400, y=300 to the click tool. \
-        Always briefly describe what you see before and after taking actions.
+        Always briefly describe what you see before and after taking actions. \
+        When looking at a code editor (VS Code, Cursor, Xcode, etc.), use read_editor_content to get \
+        the full source code text instead of relying only on screenshots. \
+        Use the visualize tool to show the user visual mockups, UI renderings, component previews, \
+        diagrams, or any visual content as interactive HTML in the sidebar.
         """
 
     init(apiKey: String, targetContext: TargetContext, windowTracker: WindowTracker) {
@@ -86,6 +92,22 @@ class ChatController {
                         "amount": ToolProperty(type: "integer", description: "Number of scroll clicks (default 3)", enumValues: nil)
                     ],
                     required: ["x", "y", "direction"]
+                )
+            ),
+            ToolDefinition(
+                name: "read_editor_content",
+                description: "Read the full text content from the focused text area or code editor in the target window. Returns the complete file/document text, not just what's visible on screen. Use this on code editors (VS Code, Cursor, Xcode, etc.) to get the actual source code.",
+                inputSchema: ToolSchema(properties: [:], required: [])
+            ),
+            ToolDefinition(
+                name: "visualize",
+                description: "Render an interactive HTML visualization in the chat sidebar. Use this to show visual representations of UI components, widgets, mockups, diagrams, or any visual content. Provide complete HTML with inline CSS and JS. The content renders in a sandboxed frame within the sidebar.",
+                inputSchema: ToolSchema(
+                    properties: [
+                        "html": ToolProperty(type: "string", description: "Complete HTML content to render (can include inline <style> and <script> tags)", enumValues: nil),
+                        "title": ToolProperty(type: "string", description: "Label shown above the visualization", enumValues: nil)
+                    ],
+                    required: ["html"]
                 )
             )
         ]
@@ -274,6 +296,42 @@ class ChatController {
             let amount = input["amount"]?.intValue ?? 3
             let result = await InteractionTools.scroll(x: x, y: y, direction: direction, amount: amount, context: currentContext)
             return .toolResult(toolUseId: toolId, content: [.text(result.message)], isError: !result.success)
+
+        case "read_editor_content":
+            BoneLog.log("ChatController: read_editor_content — pid=\(currentContext.ownerPID)")
+            let textResults = AccessibilityHelper.readTextContent(pid: currentContext.ownerPID, bounds: currentContext.bounds)
+            if textResults.isEmpty {
+                return .toolResult(toolUseId: toolId, content: [.text("No text area found in the target window. The app may not expose text content via accessibility, or no editor is focused.")], isError: false)
+            }
+            var output = ""
+            for (i, r) in textResults.enumerated() {
+                if textResults.count > 1 {
+                    output += "--- Text Area \(i + 1) (\(r.role)\(r.title.map { ": \($0)" } ?? "")) ---\n"
+                }
+                output += r.text
+                if r.wasTruncated {
+                    output += "\n\n[Truncated — total \(r.characterCount) characters, showing first 100,000]"
+                }
+                output += "\n"
+            }
+            return .toolResult(toolUseId: toolId, content: [.text(output)], isError: false)
+
+        case "visualize":
+            let html = input["html"]?.stringValue ?? ""
+            let vizTitle = input["title"]?.stringValue
+            guard !html.isEmpty else {
+                return .toolResult(toolUseId: toolId, content: [.text("Error: html parameter is required")], isError: true)
+            }
+            BoneLog.log("ChatController: visualize — title=\(vizTitle ?? "none"), html length=\(html.count)")
+            uiMessages.append(ChatMessageUI(
+                id: UUID(), role: .assistant,
+                text: "",
+                isStreaming: false,
+                visualizationHTML: html,
+                visualizationTitle: vizTitle
+            ))
+            delegate?.chatControllerDidUpdateMessages(self)
+            return .toolResult(toolUseId: toolId, content: [.text("Visualization rendered in sidebar\(vizTitle.map { ": \($0)" } ?? "")")], isError: false)
 
         default:
             return .toolResult(toolUseId: toolId, content: [.text("Unknown tool: \(name)")], isError: true)
