@@ -27,7 +27,7 @@ class DogAnimation {
 
     private let dogSpeed: CGFloat = 350
     private let runToCornerSpeed: CGFloat = 280
-    private let dogSize = NSSize(width: 48, height: 32)
+    private let dogSize = NSSize(width: 72, height: 48)
     private let pauseFrames: Int = 15
 
     enum Phase {
@@ -209,7 +209,7 @@ class DogSpriteView: NSView {
     var runFrame = 0
     var hasBone = false
 
-    private let px: CGFloat = 2.0
+    private let px: CGFloat = 3.0
 
     override func draw(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
