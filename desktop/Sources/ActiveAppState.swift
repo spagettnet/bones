@@ -18,6 +18,7 @@ class ActiveAppState {
     var contextTree: AXElementNode?
     var buttons: [AXElementNode] = []
     var inputFields: [AXElementNode] = []
+    var debugVisible: Bool = false
 
     var isActive: Bool { activeWindowID != nil }
 
@@ -44,7 +45,6 @@ class ActiveAppState {
         inputFields = []
 
         PersistentHighlightWindow.shared.highlight(frame: windowBounds)
-        DebugPanelWindow.shared.refresh()
         startBoundsTimer()
         startTreeTimer()
         startMouseMonitor()
@@ -52,7 +52,6 @@ class ActiveAppState {
 
     func recordScreenshot(filename: String) {
         screenshots.append((filename: filename, date: Date()))
-        DebugPanelWindow.shared.refresh()
     }
 
     func detach() {
@@ -74,7 +73,7 @@ class ActiveAppState {
 
         InteractableOverlayWindow.shared.hideAll()
         PersistentHighlightWindow.shared.orderOut(nil)
-        DebugPanelWindow.shared.hide()
+        debugVisible = false
     }
 
     // MARK: - Mouse Monitor
@@ -104,14 +103,11 @@ class ActiveAppState {
         let cgPoint = CGPoint(x: appKitPoint.x, y: screen.frame.height - appKitPoint.y)
         mouseLocation = cgPoint
 
-        DebugPanelWindow.shared.refreshFastState()
-
         // Throttle element lookup to 5Hz
         let now = CFAbsoluteTimeGetCurrent()
         if now - lastElementLookup >= 0.2 {
             lastElementLookup = now
             elementUnderCursor = AccessibilityHelper.elementAtPosition(cgPoint)
-            DebugPanelWindow.shared.refreshFastState()
         }
     }
 
@@ -136,11 +132,7 @@ class ActiveAppState {
 
         // Update focus state
         let frontPID = NSWorkspace.shared.frontmostApplication?.processIdentifier ?? 0
-        let wasFocused = isFocused
         isFocused = frontPID == ownerPID
-        if isFocused != wasFocused {
-            DebugPanelWindow.shared.refresh()
-        }
 
         guard let windowList = CGWindowListCopyWindowInfo(
             [.optionOnScreenOnly, .excludeDesktopElements],
@@ -163,13 +155,11 @@ class ActiveAppState {
             if newBounds != windowBounds {
                 windowBounds = newBounds
                 PersistentHighlightWindow.shared.highlight(frame: newBounds)
-                DebugPanelWindow.shared.reposition()
                 InteractableOverlayWindow.shared.updateOverlays()
             }
 
             if let title = info[kCGWindowName as String] as? String, title != windowTitle {
                 windowTitle = title
-                DebugPanelWindow.shared.refresh()
             }
             return
         }
@@ -209,7 +199,6 @@ class ActiveAppState {
             inputFields = []
         }
 
-        DebugPanelWindow.shared.refresh()
         InteractableOverlayWindow.shared.updateOverlays()
     }
 }

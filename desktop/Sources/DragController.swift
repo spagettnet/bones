@@ -86,26 +86,17 @@ class DragController {
             cleanup()
             return
         }
-        // Look up full window info and attach before cleanup (which clears currentTargetWindowID)
-        let windowInfo = WindowDetector.windowAt(point: point)
-        cleanup()
-        if let windowInfo {
-            ActiveAppState.shared.attach(windowInfo: windowInfo)
-        }
-        Task { @MainActor in
-            await ScreenshotCapture.capture(windowID: windowID)
-
-        // Freeze the skeleton and get its final pose
+        ActiveAppState.shared.attach(windowInfo: windowInfo)
+        
+        // Freeze skeleton before tearing down drag UI.
         let finalPose = dragWindow?.freezeAndGetPose() ?? SkeletonDefinition.restPose(hangingFrom: point)
+        let dragFrame = dragWindow?.frame ?? .zero
         let dropPoint = point
 
-        // Stop sound
         soundEngine.stop()
 
-        // Get the drag window's frame so we can convert pose to screen coords
-        let dragFrame = dragWindow?.frame ?? .zero
-
-        // Clean up drag and highlight windows
+        // Clean up drag and highlight windows (keep session controller alive).
+        dragWindow?.stopPhysics()
         dragWindow?.close()
         dragWindow = nil
         highlightWindow?.close()

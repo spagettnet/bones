@@ -52,9 +52,6 @@ class HighlightBorderView: NSView {
         let insetRect = bounds.insetBy(dx: 2, dy: 2)
         let path = NSBezierPath(roundedRect: insetRect, xRadius: 8, yRadius: 8)
 
-        NSColor.systemBlue.withAlphaComponent(0.15).setFill()
-        path.fill()
-
         path.lineWidth = 3
         NSColor.systemBlue.withAlphaComponent(0.7).setStroke()
         path.stroke()

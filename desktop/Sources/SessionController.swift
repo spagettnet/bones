@@ -75,6 +75,10 @@ class SessionController {
         chatController = nil
     }
 
+    func toggleDebugTab() {
+        sidebarWindow?.toggleDebugTab()
+    }
+
     private func freshWindowBounds(windowID: CGWindowID) -> CGRect? {
         guard let windowList = CGWindowListCopyWindowInfo(
             [.optionIncludingWindow], windowID

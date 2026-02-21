@@ -21,7 +21,7 @@ class InteractableOverlayWindow: NSWindow {
     }
 
     func updateOverlays() {
-        guard DebugPanelWindow.shared.wantsVisible else {
+        guard ActiveAppState.shared.debugVisible else {
             hideAll()
             return
         }

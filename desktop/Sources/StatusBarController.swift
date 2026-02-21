@@ -38,7 +38,7 @@ class StatusBarController: NSObject {
 
         let debugItem = NSMenuItem(title: "Debug Panel", action: #selector(toggleDebugPanel), keyEquivalent: "d")
         debugItem.target = self
-        debugItem.state = DebugPanelWindow.shared.wantsVisible ? .on : .off
+        debugItem.state = ActiveAppState.shared.debugVisible ? .on : .off
         debugItem.isEnabled = ActiveAppState.shared.isActive
         menu.addItem(debugItem)
 
@@ -56,7 +56,7 @@ class StatusBarController: NSObject {
     }
 
     @objc private func toggleDebugPanel() {
-        DebugPanelWindow.shared.toggle()
+        sessionController.toggleDebugTab()
     }
 
     @objc private func showAbout() {
