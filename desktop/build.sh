@@ -24,6 +24,7 @@ swiftc \
     -framework AppKit \
     -framework ScreenCaptureKit \
     -framework CoreGraphics \
+    -framework ApplicationServices \
     -framework QuartzCore \
     -framework AVFoundation \
     -framework Security \
@@ -40,13 +41,19 @@ swiftc \
     Sources/WindowTracker.swift \
     Sources/ScreenshotCapture.swift \
     Sources/SkeletonRenderer.swift \
+    Sources/FeedbackWindow.swift \
+    Sources/ActiveAppState.swift \
+    Sources/PersistentHighlightWindow.swift \
+    Sources/DebugPanelWindow.swift \
+    Sources/AccessibilityHelper.swift \
+    Sources/InteractableOverlayWindow.swift \
     Sources/SkeletonPhysics.swift \
     Sources/BoneSoundEngine.swift \
     Sources/BoneBreakAnimation.swift \
     Sources/DogAnimation.swift \
     Sources/BoneLog.swift \
-    Sources/FeedbackWindow.swift \
     Sources/SidebarWindow.swift \
+    Sources/SidebarDebugView.swift \
     Sources/ChatController.swift \
     Sources/AnthropicClient.swift \
     Sources/KeychainHelper.swift \
@@ -55,11 +62,13 @@ swiftc \
 echo "==> Copying Info.plist..."
 cp Info.plist "${CONTENTS}/Info.plist"
 
+echo "==> Signing app bundle..."
+if ! codesign --sign "Bones Dev" --force "${APP_BUNDLE}" 2>/dev/null; then
+    echo "    Bones Dev certificate not found; using ad-hoc signing."
+    codesign --sign - --force "${APP_BUNDLE}"
+fi
 echo "==> Copying Resources..."
 cp -r Resources/* "${RESOURCES}/" 2>/dev/null || true
-
-echo "==> Signing with Bones Dev certificate..."
-codesign --sign "Bones Dev" --force "${APP_BUNDLE}"
 
 echo "==> Build complete: ${APP_BUNDLE}"
 echo "    Run with: open ${APP_BUNDLE}"

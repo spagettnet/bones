@@ -58,6 +58,8 @@ enum ScreenshotCapture {
             NSSound(named: "Pop")?.play()
             FeedbackWindow.show(message: "Screenshot saved!", detail: filename)
 
+            ActiveAppState.shared.recordScreenshot(filename: filename)
+
         } catch {
             showError("Screenshot failed: \(error.localizedDescription)")
         }

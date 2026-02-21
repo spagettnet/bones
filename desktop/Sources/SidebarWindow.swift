@@ -6,6 +6,9 @@ class SidebarWindow: NSPanel, ChatControllerDelegate {
     private let sidebarWidth: CGFloat = 340
     private let chatController: ChatController
     private let windowTracker: WindowTracker
+    private var tabControl: NSSegmentedControl!
+    private var chatContainer: NSView!
+    private var debugView: SidebarDebugView!
     private var webView: WKWebView!
     private var inputField: NSTextField!
     private var webViewReady = false
@@ -26,7 +29,7 @@ class SidebarWindow: NSPanel, ChatControllerDelegate {
 
         self.isReleasedWhenClosed = false
         self.level = .floating
-        self.title = "Bones Chat"
+        self.title = "Bones"
         self.isMovableByWindowBackground = true
         self.becomesKeyOnlyIfNeeded = true
         self.hidesOnDeactivate = false
@@ -77,15 +80,33 @@ class SidebarWindow: NSPanel, ChatControllerDelegate {
         bgView.autoresizingMask = [.width, .height]
         contentView.addSubview(bgView)
 
+        let tabsHeight: CGFloat = 32
+        let contentHeight = contentView.bounds.height - tabsHeight
+
+        tabControl = NSSegmentedControl(labels: ["Chat", "Debug"], trackingMode: .selectOne, target: self, action: #selector(tabChanged))
+        tabControl.frame = NSRect(x: 8, y: contentHeight + 4, width: contentView.bounds.width - 16, height: 24)
+        tabControl.selectedSegment = 0
+        tabControl.autoresizingMask = [.width, .minYMargin]
+        bgView.addSubview(tabControl)
+
+        chatContainer = NSView(frame: NSRect(x: 0, y: 0, width: contentView.bounds.width, height: contentHeight))
+        chatContainer.autoresizingMask = [.width, .height]
+        bgView.addSubview(chatContainer)
+
+        debugView = SidebarDebugView(frame: chatContainer.frame)
+        debugView.autoresizingMask = [.width, .height]
+        debugView.isHidden = true
+        bgView.addSubview(debugView)
+
         // Input area at bottom
         let inputHeight: CGFloat = 44
         let inputArea = NSView(frame: NSRect(
-            x: 0, y: 0, width: contentView.bounds.width, height: inputHeight
+            x: 0, y: 0, width: chatContainer.bounds.width, height: inputHeight
         ))
         inputArea.autoresizingMask = [.width, .maxYMargin]
 
         inputField = NSTextField(frame: NSRect(
-            x: 8, y: 8, width: contentView.bounds.width - 48, height: 28
+            x: 8, y: 8, width: chatContainer.bounds.width - 48, height: 28
         ))
         inputField.placeholderString = "Ask about this window..."
         inputField.bezelStyle = .roundedBezel
@@ -95,7 +116,7 @@ class SidebarWindow: NSPanel, ChatControllerDelegate {
         inputArea.addSubview(inputField)
 
         let sendButton = NSButton(frame: NSRect(
-            x: contentView.bounds.width - 36, y: 8, width: 28, height: 28
+            x: chatContainer.bounds.width - 36, y: 8, width: 28, height: 28
         ))
         sendButton.bezelStyle = .texturedRounded
         sendButton.title = ">"
@@ -104,7 +125,7 @@ class SidebarWindow: NSPanel, ChatControllerDelegate {
         sendButton.autoresizingMask = [.minXMargin]
         inputArea.addSubview(sendButton)
 
-        contentView.addSubview(inputArea)
+        chatContainer.addSubview(inputArea)
 
         // WKWebView for chat messages
         let config = WKWebViewConfiguration()
@@ -112,13 +133,13 @@ class SidebarWindow: NSPanel, ChatControllerDelegate {
 
         webView = WKWebView(frame: NSRect(
             x: 0, y: inputHeight,
-            width: contentView.bounds.width,
-            height: contentView.bounds.height - inputHeight
+            width: chatContainer.bounds.width,
+            height: chatContainer.bounds.height - inputHeight
         ), configuration: config)
         webView.autoresizingMask = [.width, .height]
         webView.setValue(false, forKey: "drawsBackground")
         webView.navigationDelegate = self
-        contentView.addSubview(webView)
+        chatContainer.addSubview(webView)
 
         loadChatHTML()
     }
@@ -136,6 +157,7 @@ class SidebarWindow: NSPanel, ChatControllerDelegate {
             markedJS = String(data: data, encoding: .utf8) ?? ""
         }
 
+        debugView.setVisible(false)
         let html = """
         <!DOCTYPE html>
         <html>
@@ -275,6 +297,19 @@ class SidebarWindow: NSPanel, ChatControllerDelegate {
         }
     }
 
+    @objc private func tabChanged() {
+        let showDebug = tabControl.selectedSegment == 1
+        chatContainer.isHidden = showDebug
+        debugView.isHidden = !showDebug
+        debugView.setVisible(showDebug)
+    }
+
+    func toggleDebugTab() {
+        let isDebug = tabControl.selectedSegment == 1
+        tabControl.selectedSegment = isDebug ? 0 : 1
+        tabChanged()
+    }
+
     // MARK: - ChatControllerDelegate
 
     func chatControllerDidUpdateMessages(_ controller: ChatController) {
@@ -322,6 +357,8 @@ class SidebarWindow: NSPanel, ChatControllerDelegate {
     // MARK: - Cleanup
 
     override func close() {
+        ActiveAppState.shared.debugVisible = false
+        InteractableOverlayWindow.shared.hideAll()
         windowTracker.stopTracking()
         super.close()
     }

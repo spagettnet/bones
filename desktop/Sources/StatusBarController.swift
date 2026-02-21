@@ -35,6 +35,13 @@ class StatusBarController: NSObject {
         let menu = NSMenu()
         menu.addItem(withTitle: "About Bones", action: #selector(showAbout), keyEquivalent: "")
             .target = self
+
+        let debugItem = NSMenuItem(title: "Debug Panel", action: #selector(toggleDebugPanel), keyEquivalent: "d")
+        debugItem.target = self
+        debugItem.state = ActiveAppState.shared.debugVisible ? .on : .off
+        debugItem.isEnabled = ActiveAppState.shared.isActive
+        menu.addItem(debugItem)
+
         menu.addItem(.separator())
         menu.addItem(withTitle: "Set API Key...", action: #selector(setAPIKey), keyEquivalent: "")
             .target = self
@@ -46,6 +53,10 @@ class StatusBarController: NSObject {
         statusItem.menu = menu
         statusItem.button?.performClick(nil)
         statusItem.menu = nil
+    }
+
+    @objc private func toggleDebugPanel() {
+        sessionController.toggleDebugTab()
     }
 
     @objc private func showAbout() {

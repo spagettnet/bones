@@ -98,6 +98,7 @@ class ChatController {
             delegate?.chatControllerDidEncounterError(self, error: "Failed to capture initial screenshot")
             return
         }
+        ActiveAppState.shared.recordScreenshot(filename: "Initial session capture")
 
         let base64 = imageData.base64EncodedString()
         let userContent: [ContentBlock] = [

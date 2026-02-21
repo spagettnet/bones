@@ -8,6 +8,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if !CGPreflightScreenCaptureAccess() {
             CGRequestScreenCaptureAccess()
         }
+        if !AccessibilityHelper.isTrusted {
+            AccessibilityHelper.requestPermission()
+        }
         statusBarController = StatusBarController()
     }
 }
