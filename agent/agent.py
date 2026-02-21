@@ -351,6 +351,97 @@ NATIVE_TOOLS = [
             "required": ["app_id"]
         }
     },
+    {
+        "name": "save_overlay",
+        "description": (
+            "Write overlay HTML to disk and display it. This is the primary way to create "
+            "and iterate on persistent overlays. The HTML is written to "
+            "~/.bones/apps/{domain}/{id}/overlay.html and immediately shown. "
+            "Call again with the same id to update — edits go straight to disk and reload."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "description": "Slug ID for the overlay (e.g. 'game-spinner', 'pr-dashboard')"
+                },
+                "name": {
+                    "type": "string",
+                    "description": "Human-readable name (e.g. 'Game Spinner')"
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Brief description of what the overlay does"
+                },
+                "html": {
+                    "type": "string",
+                    "description": "Full HTML content for the overlay"
+                },
+                "width": {
+                    "type": "integer",
+                    "description": "Width in pixels (default 400)"
+                },
+                "height": {
+                    "type": "integer",
+                    "description": "Height in pixels (default 300)"
+                },
+                "position": {
+                    "type": "string",
+                    "enum": ["top-left", "top-right", "center", "bottom-left"],
+                    "description": "Overlay position on screen"
+                }
+            },
+            "required": ["id", "name", "description", "html"]
+        }
+    },
+    {
+        "name": "read_overlay_source",
+        "description": (
+            "Read the HTML source of a saved overlay from disk. "
+            "Use this to see the current state before making edits, "
+            "then call save_overlay with the modified HTML."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "description": "ID of the saved overlay to read"
+                }
+            },
+            "required": ["id"]
+        }
+    },
+    {
+        "name": "list_saved_overlays",
+        "description": (
+            "List all saved overlays for the current app/site. "
+            "Returns overlay IDs, names, and descriptions."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+    },
+    {
+        "name": "load_overlay",
+        "description": (
+            "Load a previously saved overlay from disk and display it. "
+            "Use this to restore an overlay from a previous session."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "description": "ID of the saved overlay to load"
+                }
+            },
+            "required": ["id"]
+        }
+    },
 ]
 
 SYSTEM_PROMPT = """\
@@ -396,6 +487,13 @@ CRITICAL OVERLAY RULES:
   real window.bones.navigate(url) for navigation — not proxy everything through bones click tools.
 - Always give overlays a close button that calls window.bones.close().
 - If something goes wrong, use get_overlay_logs to see console errors from the overlay.
+
+PERSISTENT OVERLAYS:
+- Use save_overlay to write overlay HTML directly to disk and display it. This is the preferred way \
+  to build overlays that the user might want again — the files persist at ~/.bones/apps/{domain}/{id}/.
+- To iterate: call read_overlay_source to get the current HTML, make edits, then save_overlay again.
+- When saved overlays are available for the current site/app, offer to load them with load_overlay.
+- For throwaway overlays, create_overlay is still fine. But for anything substantial, use save_overlay.
 
 RULES:
 - ALWAYS take a labeled screenshot first to see available element codes.
@@ -446,6 +544,15 @@ class Agent:
                 "Pass the page URL as the 'url' parameter."
             )
             content.append({"type": "text", "text": apps_text})
+        if msg.get("saved_overlays"):
+            saved_text = "SAVED OVERLAYS for this site/app:\n"
+            for ov in msg["saved_overlays"]:
+                saved_text += f"- {ov['name']} (id: {ov['id']}): {ov['description']}\n"
+            saved_text += (
+                "\nOffer to load these for the user. "
+                "Use load_overlay(id='...') to restore a saved overlay instantly."
+            )
+            content.append({"type": "text", "text": saved_text})
         content.append({
             "type": "text",
             "text": "Here is the current state of the window. What do you see?"

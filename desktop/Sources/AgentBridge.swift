@@ -58,6 +58,7 @@ class AgentBridge {
                 js: "window.location.href", appName: appName)
             if urlResult.success && !urlResult.message.isEmpty {
                 pageURL = urlResult.message
+                ActiveAppState.shared.pageURL = pageURL
                 siteApps = SiteAppRegistry.shared.appsForURL(pageURL).map { app in
                     ["id": app.id, "name": app.name, "description": app.description] as [String: Any]
                 }
@@ -134,6 +135,16 @@ class AgentBridge {
         }
         if !siteApps.isEmpty {
             initMsg["site_apps"] = siteApps
+        }
+        let savedOverlays = SavedOverlayStore.shared.list()
+        if !savedOverlays.isEmpty {
+            initMsg["saved_overlays"] = savedOverlays.map { overlay in
+                [
+                    "id": overlay.id,
+                    "name": overlay.name,
+                    "description": overlay.description
+                ] as [String: Any]
+            }
         }
         sendToProcess(initMsg)
     }
@@ -522,6 +533,60 @@ class AgentBridge {
             let pageURL = input["url"] as? String ?? ""
             let result = await SiteAppRegistry.shared.launch(appId: appId, pageURL: pageURL)
             return toolResult(id: id, text: result.message, isError: !result.success)
+
+        case "save_overlay":
+            guard let overlayId = input["id"] as? String, !overlayId.isEmpty else {
+                return toolResult(id: id, text: "Missing 'id' parameter", isError: true)
+            }
+            guard let html = input["html"] as? String, !html.isEmpty else {
+                return toolResult(id: id, text: "Missing 'html' parameter", isError: true)
+            }
+            let overlayName = input["name"] as? String ?? overlayId
+            let desc = input["description"] as? String ?? ""
+            let width = input["width"] as? Int ?? 400
+            let height = input["height"] as? Int ?? 300
+            let position = input["position"] as? String
+            let saveResult = SavedOverlayStore.shared.save(
+                id: overlayId, name: overlayName, description: desc,
+                html: html, width: width, height: height, position: position)
+            if saveResult.success {
+                overlayManager?.createOverlay(
+                    html: html, width: CGFloat(width), height: CGFloat(height), position: position)
+            }
+            return toolResult(id: id, text: saveResult.message, isError: !saveResult.success)
+
+        case "read_overlay_source":
+            guard let overlayId = input["id"] as? String, !overlayId.isEmpty else {
+                return toolResult(id: id, text: "Missing 'id' parameter", isError: true)
+            }
+            guard let overlay = SavedOverlayStore.shared.load(id: overlayId) else {
+                return toolResult(id: id, text: "No saved overlay with id '\(overlayId)' found", isError: true)
+            }
+            return toolResult(id: id, text: overlay.html, isError: false)
+
+        case "list_saved_overlays":
+            let overlays = SavedOverlayStore.shared.list()
+            if overlays.isEmpty {
+                return toolResult(id: id, text: "No saved overlays for this app/site.", isError: false)
+            }
+            let lines = overlays.map { o in
+                "- \(o.name) (id: \(o.id)): \(o.description)"
+            }
+            return toolResult(id: id, text: "Saved overlays:\n" + lines.joined(separator: "\n"), isError: false)
+
+        case "load_overlay":
+            guard let overlayId = input["id"] as? String, !overlayId.isEmpty else {
+                return toolResult(id: id, text: "Missing 'id' parameter", isError: true)
+            }
+            guard let overlay = SavedOverlayStore.shared.load(id: overlayId) else {
+                return toolResult(id: id, text: "No saved overlay with id '\(overlayId)' found", isError: true)
+            }
+            overlayManager?.createOverlay(
+                html: overlay.html,
+                width: CGFloat(overlay.width),
+                height: CGFloat(overlay.height),
+                position: overlay.position)
+            return toolResult(id: id, text: "Loaded overlay '\(overlay.name)' (\(overlay.width)x\(overlay.height))", isError: false)
 
         default:
             return toolResult(id: id, text: "Unknown tool: \(name)", isError: true)
