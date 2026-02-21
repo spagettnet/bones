@@ -29,11 +29,14 @@ class SkeletonDragView: NSView {
 
     func startPhysics() {
         animationTimer?.invalidate()
-        animationTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.tick()
             }
         }
+        // Add to .common modes so it fires during event tracking (drag loop)
+        RunLoop.current.add(timer, forMode: .common)
+        animationTimer = timer
     }
 
     func stopPhysics() {
@@ -50,6 +53,7 @@ class SkeletonDragView: NSView {
 @MainActor
 class DragWindow: NSWindow {
     let skeletonView: SkeletonDragView
+    private var lastScreenPosition: NSPoint?
 
     init() {
         let size = NSSize(width: 120, height: 160)
@@ -75,17 +79,29 @@ class DragWindow: NSWindow {
     func followMouse(at point: NSPoint) {
         let w = frame.size.width
         let h = frame.size.height
+
+        // Compute screen-space delta for physics inertia
+        if let last = lastScreenPosition {
+            let screenDx = point.x - last.x
+            let screenDy = point.y - last.y
+            // Convert to view-local Y-down coords: screen Y-up → view Y-down
+            skeletonView.physics.applyWindowDelta(dx: screenDx, dy: -screenDy)
+        }
+        lastScreenPosition = point
+
         // Position window so that the anchor point (top center) is at the cursor
         setFrameOrigin(NSPoint(
             x: point.x - w / 2,
             y: point.y - h + 15
         ))
-        // Update physics anchor in view-local coordinates (Y-down)
+
+        // The pin point is always at the top-center of the view (in Y-down coords)
         skeletonView.physics.setPinnedPosition(CGPoint(x: w / 2, y: 15))
     }
 
     func startPhysics() {
         skeletonView.startPhysics()
+        BoneLog.log("DragWindow: physics started")
     }
 
     func stopPhysics() {
@@ -94,6 +110,7 @@ class DragWindow: NSWindow {
 
     func freezeAndGetPose() -> SkeletonPose {
         skeletonView.stopPhysics()
+        BoneLog.log("DragWindow: froze pose with \(skeletonView.physics.pose.jointPositions.count) joints")
         return skeletonView.physics.pose
     }
 }

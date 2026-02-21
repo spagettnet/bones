@@ -27,6 +27,7 @@ swiftc \
     -framework QuartzCore \
     -framework AVFoundation \
     -framework Security \
+    -framework WebKit \
     -O \
     Sources/main.swift \
     Sources/AppDelegate.swift \
@@ -43,6 +44,7 @@ swiftc \
     Sources/BoneSoundEngine.swift \
     Sources/BoneBreakAnimation.swift \
     Sources/DogAnimation.swift \
+    Sources/BoneLog.swift \
     Sources/FeedbackWindow.swift \
     Sources/SidebarWindow.swift \
     Sources/ChatController.swift \
@@ -52,6 +54,9 @@ swiftc \
 
 echo "==> Copying Info.plist..."
 cp Info.plist "${CONTENTS}/Info.plist"
+
+echo "==> Copying Resources..."
+cp -r Resources/* "${RESOURCES}/" 2>/dev/null || true
 
 echo "==> Signing with Bones Dev certificate..."
 codesign --sign "Bones Dev" --force "${APP_BUNDLE}"

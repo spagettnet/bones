@@ -53,6 +53,14 @@ open build/Bones.app
 - Build with `swiftc` directly — no SPM, no Xcode. Add new `.swift` files to `build.sh`
 - Menu bar icon is a template image (adapts to dark/light mode)
 
+### Debug Logging
+
+- Use `BoneLog.log("Component: message")` for debug logging throughout the app
+- Logs write to `~/Desktop/bones-debug.log` (truncated on each app launch)
+- Add generous logging in animations, physics, drag/drop, and session flows
+- Prefix log messages with the component name (e.g., `DragController:`, `BoneBreak:`, `DogAnim:`)
+- Tail the log with: `tail -f ~/Desktop/bones-debug.log`
+
 ## Conventions (All Packages)
 
 - Each top-level directory is a self-contained package with its own build tooling

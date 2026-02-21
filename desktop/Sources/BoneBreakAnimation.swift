@@ -1,53 +1,72 @@
 import AppKit
 import QuartzCore
 
-/// Animates the skeleton breaking apart into individual bones that scatter
-/// and fall to the target window's title bar, then triggers the dog animation.
+/// Bones scatter onto the target window and track its position.
+/// Dog grabs a bone and sits in the top-right corner.
 @MainActor
 class BoneBreakAnimation {
     private var overlayWindow: NSWindow?
-    private var boneLayers: [(layer: CALayer, boneID: BoneID, velocity: CGPoint, rotation: CGFloat)] = []
+    private var boneLayers: [(layer: CALayer, boneID: BoneID, velocity: CGPoint)] = []
     private var animationTimer: Timer?
+    private var trackingTimer: Timer?
     private var onComplete: (() -> Void)?
     private var dogAnimation: DogAnimation?
     private var cancelled = false
     private let soundEngine = BoneSoundEngine()
 
+    // Target window tracking
+    private var targetWindowID: CGWindowID = 0
+    private var targetWindowBounds: CGRect = .zero  // CG coords
+    private var overlayOffset: CGPoint = .zero       // offset from target window origin
+
     // Physics
-    private let gravity: CGFloat = 1400
-    private let bounceRestitution: CGFloat = 0.25
-    private let friction: CGFloat = 0.85
-    private var floorY: CGFloat = 0  // In overlay-local coords (Y-up)
+    private let gravity: CGFloat = 900
+    private let bounceRestitution: CGFloat = 0.2
+    private let friction: CGFloat = 0.7
+    private var floorY: CGFloat = 0
     private var elapsed: TimeInterval = 0
-    private let scatterDuration: TimeInterval = 1.0
+    private let maxDuration: TimeInterval = 1.5
 
     func play(
         fromPose pose: SkeletonPose,
         dragWindowFrame: CGRect,
-        targetWindowBounds: CGRect,  // CG coordinates (Y-down from top-left of screen)
-        dropPoint: NSPoint,          // AppKit coordinates (Y-up)
+        targetWindowInfo: WindowInfo,
+        dropPoint: NSPoint,
         completion: @escaping () -> Void
     ) {
         self.onComplete = completion
+        self.targetWindowID = targetWindowInfo.windowID
+        self.targetWindowBounds = targetWindowInfo.bounds
 
-        // Convert target bounds from CG coords to AppKit coords
-        guard let screen = NSScreen.main else {
+        // CG coords use the PRIMARY screen as reference (top-left origin, Y-down).
+        // Must always use screens[0] (primary), NOT NSScreen.main (which could be any screen).
+        guard let primaryScreen = NSScreen.screens.first else {
+            BoneLog.log("BoneBreak: ERROR no screens")
             completion()
             return
         }
-        let screenHeight = screen.frame.height
-        let targetAppKit = CGRect(
-            x: targetWindowBounds.origin.x,
-            y: screenHeight - targetWindowBounds.origin.y - targetWindowBounds.height,
-            width: targetWindowBounds.width,
-            height: targetWindowBounds.height
+        let primaryH = primaryScreen.frame.height
+
+        let targetAppKit = cgRectToAppKit(targetWindowBounds, primaryScreenHeight: primaryH)
+
+        BoneLog.log("BoneBreak: play() drop=\(dropPoint), targetCG=\(targetWindowBounds), targetAppKit=\(targetAppKit), primaryH=\(primaryH)")
+        for (i, s) in NSScreen.screens.enumerated() {
+            BoneLog.log("BoneBreak: screen[\(i)] frame=\(s.frame)")
+        }
+
+        // Overlay matches the target window exactly + extra height above for the drop
+        let extraTop = max(dropPoint.y - targetAppKit.maxY + 60, 60)
+        let overlayRect = CGRect(
+            x: targetAppKit.minX,
+            y: targetAppKit.minY,
+            width: targetAppKit.width,
+            height: targetAppKit.height + extraTop
         )
 
-        // Create overlay window covering the area from drop point down to target title bar
-        let overlayRect = calculateOverlayRect(
-            dropPoint: dropPoint,
-            targetFrame: targetAppKit,
-            screenFrame: screen.frame
+        // Remember offset from target window for tracking
+        overlayOffset = CGPoint(
+            x: overlayRect.origin.x - targetAppKit.origin.x,
+            y: overlayRect.origin.y - targetAppKit.origin.y
         )
 
         let window = NSWindow(
@@ -65,60 +84,95 @@ class BoneBreakAnimation {
 
         let rootView = NSView(frame: NSRect(origin: .zero, size: overlayRect.size))
         rootView.wantsLayer = true
-        rootView.layer?.isGeometryFlipped = false
         window.contentView = rootView
-
         self.overlayWindow = window
 
-        // Floor = title bar Y in overlay-local coords
-        // Title bar is at the top of the target window in AppKit coords
-        let titleBarY = targetAppKit.maxY
-        floorY = titleBarY - overlayRect.origin.y
+        // Floor = bottom of target window (overlay starts at target's bottom edge)
+        // Small margin so bones don't clip off the edge
+        floorY = 15
 
-        // Create bone layers from the skeleton pose
-        createBoneLayers(pose: pose, dragWindowFrame: dragWindowFrame, overlayOrigin: overlayRect.origin, rootLayer: rootView.layer!)
+        BoneLog.log("BoneBreak: overlay=\(overlayRect), floorY=\(floorY)")
 
-        // Play scatter sound
+        createBoneLayers(
+            pose: pose,
+            dragWindowFrame: dragWindowFrame,
+            overlayOrigin: overlayRect.origin,
+            rootLayer: rootView.layer!
+        )
+
         soundEngine.playScatterSound()
-
         window.orderFront(nil)
 
-        // Start animation timer
         elapsed = 0
         animationTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated {
-                self?.tick()
-            }
+            MainActor.assumeIsolated { self?.tick() }
         }
+
+        // Start tracking target window position
+        startWindowTracking()
     }
 
     func cancel() {
         cancelled = true
         animationTimer?.invalidate()
         animationTimer = nil
+        trackingTimer?.invalidate()
+        trackingTimer = nil
         dogAnimation?.cancel()
         overlayWindow?.close()
         overlayWindow = nil
         soundEngine.stop()
     }
 
-    private func calculateOverlayRect(dropPoint: NSPoint, targetFrame: CGRect, screenFrame: CGRect) -> CGRect {
-        let margin: CGFloat = 100
-        let minX = min(dropPoint.x - margin, targetFrame.minX)
-        let maxX = max(dropPoint.x + margin, targetFrame.maxX)
-        let minY = targetFrame.maxY - 40  // Below the title bar
-        let maxY = dropPoint.y + margin
+    // MARK: - Helpers
 
+    private func cgRectToAppKit(_ cg: CGRect, primaryScreenHeight: CGFloat) -> CGRect {
         return CGRect(
-            x: max(minX, screenFrame.minX),
-            y: max(minY, screenFrame.minY),
-            width: min(maxX - minX, screenFrame.width),
-            height: min(maxY - minY, screenFrame.height)
+            x: cg.origin.x,
+            y: primaryScreenHeight - cg.origin.y - cg.height,
+            width: cg.width,
+            height: cg.height
         )
     }
 
+    private func currentTargetAppKit() -> CGRect? {
+        guard let primaryH = NSScreen.screens.first?.frame.height else { return nil }
+        guard let windowList = CGWindowListCopyWindowInfo([.optionIncludingWindow], targetWindowID) as? [[String: Any]],
+              let info = windowList.first,
+              let boundsDict = info[kCGWindowBounds as String] as? [String: Any],
+              let x = boundsDict["X"] as? CGFloat,
+              let y = boundsDict["Y"] as? CGFloat,
+              let w = boundsDict["Width"] as? CGFloat,
+              let h = boundsDict["Height"] as? CGFloat
+        else { return nil }
+        return cgRectToAppKit(CGRect(x: x, y: y, width: w, height: h), primaryScreenHeight: primaryH)
+    }
+
+    // MARK: - Window position tracking
+
+    private func startWindowTracking() {
+        trackingTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.updateWindowPosition() }
+        }
+    }
+
+    private func updateWindowPosition() {
+        guard let targetAppKit = currentTargetAppKit() else { return }
+
+        // Move overlay to follow the target window
+        let newOrigin = NSPoint(
+            x: targetAppKit.origin.x + overlayOffset.x,
+            y: targetAppKit.origin.y + overlayOffset.y
+        )
+        overlayWindow?.setFrameOrigin(newOrigin)
+
+        // Also update dog if it exists
+        dogAnimation?.updateTargetPosition(targetAppKit: targetAppKit)
+    }
+
+    // MARK: - Bone creation
+
     private func createBoneLayers(pose: SkeletonPose, dragWindowFrame: CGRect, overlayOrigin: CGPoint, rootLayer: CALayer) {
-        // Map each bone to its midpoint from the pose, converted to screen coords
         let allBones: [(BoneID, JointID, JointID)] = [
             (.skull, .top, .skullBase),
             (.spine1, .skullBase, .shoulder),
@@ -143,17 +197,12 @@ class BoneBreakAnimation {
         for (boneID, parentJoint, childJoint) in allBones {
             let p1 = pose.position(of: parentJoint)
             let p2 = pose.position(of: childJoint)
+            let midX = (p1.x + p2.x) / 2
+            let midY = (p1.y + p2.y) / 2
 
-            // Pose coords are in drag window local space (Y-down)
-            // Convert to AppKit screen coords: add dragWindowFrame origin, flip Y
-            let midPoseX = (p1.x + p2.x) / 2
-            let midPoseY = (p1.y + p2.y) / 2
+            let screenX = dragWindowFrame.origin.x + midX
+            let screenY = dragWindowFrame.origin.y + (dragWindowFrame.height - midY)
 
-            // In the drag window, Y-down, so screen Y = dragFrame.maxY - poseY
-            let screenX = dragWindowFrame.origin.x + midPoseX
-            let screenY = dragWindowFrame.origin.y + (dragWindowFrame.height - midPoseY)
-
-            // Convert to overlay-local coords
             let localX = screenX - overlayOrigin.x
             let localY = screenY - overlayOrigin.y
 
@@ -167,120 +216,147 @@ class BoneBreakAnimation {
             layer.contentsGravity = .resizeAspect
             rootLayer.addSublayer(layer)
 
-            // Random scatter velocity: upward burst + horizontal spread
-            let vx = CGFloat.random(in: -250...250)
-            let vy = CGFloat.random(in: 200...500)  // Upward in AppKit coords
-            let rotationSpeed = CGFloat.random(in: -8...8)
+            let vx = CGFloat.random(in: -180...180)
+            let vy = CGFloat.random(in: -50...250)
 
-            boneLayers.append((layer: layer, boneID: boneID, velocity: CGPoint(x: vx, y: vy), rotation: rotationSpeed))
+            boneLayers.append((layer: layer, boneID: boneID, velocity: CGPoint(x: vx, y: vy)))
         }
+
+        BoneLog.log("BoneBreak: created \(boneLayers.count) bone layers")
     }
+
+    // MARK: - Physics tick
 
     private func tick() {
         guard !cancelled else { return }
 
         let dt: CGFloat = 1.0 / 60.0
         elapsed += Double(dt)
-
         var allSettled = true
 
         for i in 0..<boneLayers.count {
             var item = boneLayers[i]
 
-            // Apply gravity (Y-up in AppKit)
             item.velocity.y -= gravity * dt
-            item.velocity.x *= 0.995  // Slight air resistance
+            item.velocity.x *= 0.99
 
             var pos = item.layer.position
             pos.x += item.velocity.x * dt
             pos.y += item.velocity.y * dt
 
-            // Current rotation
-            var currentRotation = item.rotation
-
-            // Bounce off floor
-            if pos.y <= floorY + 5 {
-                pos.y = floorY + 5
-                if abs(item.velocity.y) > 20 {
+            // Bounce off floor (bottom of target window)
+            if pos.y <= floorY {
+                pos.y = floorY
+                if abs(item.velocity.y) > 15 {
                     item.velocity.y = -item.velocity.y * bounceRestitution
                     item.velocity.x *= friction
-                    currentRotation *= 0.5
-                    // Play a quiet click on bounce
-                    if abs(item.velocity.y) > 50 {
-                        soundEngine.playRattleIfNeeded(velocity: abs(item.velocity.y))
-                    }
                 } else {
                     item.velocity.y = 0
-                    item.velocity.x *= 0.9
-                    currentRotation *= 0.1
+                    item.velocity.x *= 0.85
                 }
             }
 
-            // Check if settled
-            if abs(item.velocity.x) > 2 || abs(item.velocity.y) > 2 || pos.y > floorY + 8 {
+            // Bounce off left/right walls of target window
+            let wallMargin: CGFloat = 10
+            let overlayWidth = overlayWindow?.frame.width ?? 1500
+            if pos.x <= wallMargin {
+                pos.x = wallMargin
+                item.velocity.x = abs(item.velocity.x) * bounceRestitution
+            } else if pos.x >= overlayWidth - wallMargin {
+                pos.x = overlayWidth - wallMargin
+                item.velocity.x = -abs(item.velocity.x) * bounceRestitution
+            }
+
+            if abs(item.velocity.x) > 3 || abs(item.velocity.y) > 3 || pos.y > floorY + 5 {
                 allSettled = false
             }
 
-            item.layer.position = pos
-
-            // Rotate
-            let angle = atan2(item.velocity.y, item.velocity.x)
-            if abs(item.velocity.x) > 5 || abs(item.velocity.y) > 5 {
-                item.layer.transform = CATransform3DMakeRotation(angle, 0, 0, 1)
+            if abs(item.velocity.x) > 10 || abs(item.velocity.y) > 10 {
+                item.layer.transform = CATransform3DMakeRotation(
+                    atan2(item.velocity.y, item.velocity.x), 0, 0, 1
+                )
             }
 
-            item.rotation = currentRotation
+            item.layer.position = pos
             boneLayers[i] = item
         }
 
-        // After scatter duration or all settled, trigger dog
-        if elapsed > scatterDuration || allSettled {
+        if elapsed > maxDuration || allSettled {
+            BoneLog.log("BoneBreak: scatter done, triggering dog")
             animationTimer?.invalidate()
             animationTimer = nil
             triggerDogAnimation()
         }
     }
 
+    // MARK: - Dog
+
     private func triggerDogAnimation() {
-        guard !cancelled else { return }
-        guard let overlayWindow = overlayWindow else {
-            onComplete?()
+        guard !cancelled, let overlayWindow = overlayWindow else {
+            finishUp()
             return
         }
 
-        // Find the femur (upperLegLeft) position for the dog to pick up
+        let targetAppKit = currentTargetAppKit() ?? overlayWindow.frame
+
         let femurItem = boneLayers.first { $0.boneID == .upperLegLeft }
         let femurLayer = femurItem?.layer
-
-        // Convert femur position to screen coords
         let overlayOrigin = overlayWindow.frame.origin
-        let femurLocalPos = femurLayer?.position ?? CGPoint(x: overlayWindow.frame.width / 2, y: floorY + 5)
+        let femurLocalPos = femurLayer?.position ?? CGPoint(x: overlayWindow.frame.width / 2, y: floorY)
         let femurScreenPos = NSPoint(
             x: overlayOrigin.x + femurLocalPos.x,
             y: overlayOrigin.y + femurLocalPos.y
         )
 
+        // Dog sits in top-right corner of target window (title bar area)
+        // Title bar is ~28pt from the top of the window
+        let titleBarScreenY = targetAppKit.maxY - 28
+        let sitPos = NSPoint(
+            x: targetAppKit.maxX - 50,
+            y: titleBarScreenY
+        )
+
+        BoneLog.log("BoneBreak: dog titleBarY=\(titleBarScreenY), sitPos=\(sitPos), femur=\(femurScreenPos)")
+
         let dog = DogAnimation()
         self.dogAnimation = dog
 
         dog.run(
-            titleBarY: overlayOrigin.y + floorY,
+            titleBarY: femurScreenPos.y,
             screenMinX: overlayWindow.frame.minX,
             screenMaxX: overlayWindow.frame.maxX,
             bonePosition: femurScreenPos,
+            sitPosition: sitPos,
+            targetAppKitFrame: targetAppKit,
             onBonePickup: { [weak self] in
-                // Hide the femur bone when the dog grabs it
                 femurLayer?.isHidden = true
                 self?.soundEngine.playRattleIfNeeded(velocity: 200)
             },
             completion: { [weak self] in
-                // Clean up everything
-                self?.soundEngine.stop()
-                self?.overlayWindow?.close()
-                self?.overlayWindow = nil
-                self?.dogAnimation = nil
-                self?.onComplete?()
+                self?.finishUp()
             }
         )
+    }
+
+    private func finishUp() {
+        soundEngine.stop()
+        trackingTimer?.invalidate()
+        trackingTimer = nil
+
+        if let window = overlayWindow {
+            NSAnimationContext.runAnimationGroup({ ctx in
+                ctx.duration = 0.5
+                window.animator().alphaValue = 0
+            }, completionHandler: {
+                MainActor.assumeIsolated { [weak self] in
+                    self?.overlayWindow?.close()
+                    self?.overlayWindow = nil
+                    self?.dogAnimation = nil
+                    self?.onComplete?()
+                }
+            })
+        } else {
+            onComplete?()
+        }
     }
 }

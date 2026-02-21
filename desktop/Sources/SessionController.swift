@@ -80,15 +80,12 @@ class SessionController {
             [.optionIncludingWindow], windowID
         ) as? [[String: Any]],
         let info = windowList.first,
-        let boundsDict = info[kCGWindowBounds as String] as? [String: Any]
+        let boundsRef = info[kCGWindowBounds as String]
         else { return nil }
 
-        guard let x = boundsDict["X"] as? CGFloat,
-              let y = boundsDict["Y"] as? CGFloat,
-              let w = boundsDict["Width"] as? CGFloat,
-              let h = boundsDict["Height"] as? CGFloat
-        else { return nil }
-
-        return CGRect(x: x, y: y, width: w, height: h)
+        var bounds = CGRect.zero
+        let cfDict = boundsRef as CFTypeRef as! CFDictionary
+        guard CGRectMakeWithDictionaryRepresentation(cfDict, &bounds) else { return nil }
+        return bounds
     }
 }
