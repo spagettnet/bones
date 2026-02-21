@@ -42,6 +42,14 @@ struct ToolDefinition {
     let name: String
     let description: String
     let inputSchema: ToolSchema
+    let rawInputSchema: [String: Any]?
+
+    init(name: String, description: String, inputSchema: ToolSchema, rawInputSchema: [String: Any]? = nil) {
+        self.name = name
+        self.description = description
+        self.inputSchema = inputSchema
+        self.rawInputSchema = rawInputSchema
+    }
 }
 
 struct ToolSchema {
@@ -214,6 +222,10 @@ class AnthropicClient {
     }
 
     private static func encodeTool(_ tool: ToolDefinition) -> [String: Any] {
+        if let raw = tool.rawInputSchema {
+            return ["name": tool.name, "description": tool.description, "input_schema": raw]
+        }
+
         var properties: [String: Any] = [:]
         for (key, prop) in tool.inputSchema.properties {
             var propDict: [String: Any] = [

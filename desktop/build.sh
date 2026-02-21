@@ -57,7 +57,15 @@ swiftc \
     Sources/ChatController.swift \
     Sources/AnthropicClient.swift \
     Sources/KeychainHelper.swift \
-    Sources/InteractionTools.swift
+    Sources/InteractionTools.swift \
+    Sources/WidgetContentProvider.swift \
+    Sources/WidgetWindow.swift \
+    Sources/WidgetManager.swift \
+    Sources/ColorSwatchWidget.swift \
+    Sources/JSONViewerWidget.swift \
+    Sources/CodeSnippetWidget.swift \
+    Sources/CustomHTMLWidget.swift \
+    Sources/ContentChangeDetector.swift
 
 echo "==> Copying Info.plist..."
 cp Info.plist "${CONTENTS}/Info.plist"

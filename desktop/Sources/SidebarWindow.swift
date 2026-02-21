@@ -5,7 +5,6 @@ import WebKit
 class SidebarWindow: NSPanel, ChatControllerDelegate {
     private let sidebarWidth: CGFloat = 340
     private let chatController: ChatController
-    private let windowTracker: WindowTracker
     private var tabControl: NSSegmentedControl!
     private var chatContainer: NSView!
     private var debugView: SidebarDebugView!
@@ -14,9 +13,8 @@ class SidebarWindow: NSPanel, ChatControllerDelegate {
     private var webViewReady = false
     private var pendingUpdate: [ChatMessageUI]?
 
-    init(chatController: ChatController, windowTracker: WindowTracker, targetBounds: CGRect) {
+    init(chatController: ChatController, targetBounds: CGRect) {
         self.chatController = chatController
-        self.windowTracker = windowTracker
 
         let frame = Self.sidebarFrame(forTargetBounds: targetBounds, sidebarWidth: sidebarWidth)
 
@@ -35,7 +33,6 @@ class SidebarWindow: NSPanel, ChatControllerDelegate {
         self.hidesOnDeactivate = false
 
         setupUI()
-        setupWindowTracking()
         chatController.delegate = self
     }
 
@@ -53,18 +50,6 @@ class SidebarWindow: NSPanel, ChatControllerDelegate {
             width: sidebarWidth,
             height: cgBounds.height
         )
-    }
-
-    private func setupWindowTracking() {
-        windowTracker.onBoundsChanged = { [weak self] newBounds in
-            guard let self else { return }
-            let newFrame = Self.sidebarFrame(forTargetBounds: newBounds, sidebarWidth: self.sidebarWidth)
-            self.setFrame(newFrame, display: true, animate: false)
-        }
-        windowTracker.onWindowClosed = { [weak self] in
-            self?.close()
-        }
-        windowTracker.startTracking()
     }
 
     // MARK: - UI Setup
@@ -417,7 +402,6 @@ class SidebarWindow: NSPanel, ChatControllerDelegate {
     override func close() {
         ActiveAppState.shared.debugVisible = false
         InteractableOverlayWindow.shared.hideAll()
-        windowTracker.stopTracking()
         super.close()
     }
 }
