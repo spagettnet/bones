@@ -20,23 +20,31 @@ swiftc \
     -framework AppKit \
     -framework ScreenCaptureKit \
     -framework CoreGraphics \
+    -framework Security \
     -O \
     Sources/main.swift \
     Sources/AppDelegate.swift \
     Sources/StatusBarController.swift \
+    Sources/SessionController.swift \
     Sources/DragController.swift \
     Sources/DragWindow.swift \
     Sources/HighlightWindow.swift \
     Sources/WindowDetector.swift \
+    Sources/WindowTracker.swift \
     Sources/ScreenshotCapture.swift \
     Sources/LittleGuyRenderer.swift \
-    Sources/FeedbackWindow.swift
+    Sources/FeedbackWindow.swift \
+    Sources/SidebarWindow.swift \
+    Sources/ChatController.swift \
+    Sources/AnthropicClient.swift \
+    Sources/KeychainHelper.swift \
+    Sources/InteractionTools.swift
 
 echo "==> Copying Info.plist..."
 cp Info.plist "${CONTENTS}/Info.plist"
 
-echo "==> Ad-hoc signing..."
-codesign --sign - --force "${APP_BUNDLE}"
+echo "==> Signing with Bones Dev certificate..."
+codesign --sign "Bones Dev" --force "${APP_BUNDLE}"
 
 echo "==> Build complete: ${APP_BUNDLE}"
 echo "    Run with: open ${APP_BUNDLE}"

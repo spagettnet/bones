@@ -4,11 +4,14 @@ import AppKit
 class StatusBarController: NSObject {
     let statusItem: NSStatusItem
     let dragController: DragController
+    let sessionController: SessionController
 
     override init() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        sessionController = SessionController()
         dragController = DragController()
         super.init()
+        dragController.sessionController = sessionController
 
         if let button = statusItem.button {
             button.image = LittleGuyRenderer.menuBarImage()
@@ -33,6 +36,11 @@ class StatusBarController: NSObject {
         menu.addItem(withTitle: "About Bones", action: #selector(showAbout), keyEquivalent: "")
             .target = self
         menu.addItem(.separator())
+        menu.addItem(withTitle: "Set API Key...", action: #selector(setAPIKey), keyEquivalent: "")
+            .target = self
+        menu.addItem(withTitle: "End Chat Session", action: #selector(endSession), keyEquivalent: "")
+            .target = self
+        menu.addItem(.separator())
         menu.addItem(withTitle: "Quit", action: #selector(quit), keyEquivalent: "q")
             .target = self
         statusItem.menu = menu
@@ -46,6 +54,14 @@ class StatusBarController: NSObject {
         alert.informativeText = "Drag the little guy onto any window to screenshot it.\n\nLeft-click + drag: Screenshot a window\nRight-click: This menu"
         alert.alertStyle = .informational
         alert.runModal()
+    }
+
+    @objc private func setAPIKey() {
+        KeychainHelper.promptForAPIKey()
+    }
+
+    @objc private func endSession() {
+        sessionController.endSession()
     }
 
     @objc private func quit() {

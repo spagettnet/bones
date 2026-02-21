@@ -6,6 +6,7 @@ class DragController {
     var highlightWindow: HighlightWindow?
     var isDragging = false
     var currentTargetWindowID: CGWindowID?
+    var sessionController: SessionController?
     private let dragThreshold: CGFloat = 3.0
 
     func beginDrag(from event: NSEvent, statusItem: NSStatusItem) {
@@ -73,13 +74,13 @@ class DragController {
     }
 
     private func handleDrop(at point: NSPoint) {
-        guard let windowID = currentTargetWindowID else {
+        guard let windowInfo = WindowDetector.windowAt(point: point) else {
             cleanup()
             return
         }
         cleanup()
         Task { @MainActor in
-            await ScreenshotCapture.capture(windowID: windowID)
+            await sessionController?.startSession(windowInfo: windowInfo)
         }
     }
 
