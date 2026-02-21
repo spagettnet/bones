@@ -144,6 +144,31 @@ class OverlayUIWindow: NSPanel, WKScriptMessageHandler {
             });
         }
 
+        // Capture console output and errors, forward to Swift
+        var _origLog = console.log;
+        var _origWarn = console.warn;
+        var _origError = console.error;
+        function _sendLog(level, args) {
+            var msg = Array.prototype.slice.call(args).map(function(a) {
+                if (typeof a === 'object') { try { return JSON.stringify(a); } catch(e) { return String(a); } }
+                return String(a);
+            }).join(' ');
+            window.webkit.messageHandlers.bonesBridge.postMessage({
+                action: '_log',
+                payload: { level: level, message: msg },
+                callbackId: '_noop'
+            });
+        }
+        console.log = function() { _sendLog('log', arguments); _origLog.apply(console, arguments); };
+        console.warn = function() { _sendLog('warn', arguments); _origWarn.apply(console, arguments); };
+        console.error = function() { _sendLog('error', arguments); _origError.apply(console, arguments); };
+        window.addEventListener('error', function(e) {
+            _sendLog('error', ['Uncaught ' + e.message + ' at ' + (e.filename || '') + ':' + (e.lineno || '')]);
+        });
+        window.addEventListener('unhandledrejection', function(e) {
+            _sendLog('error', ['Unhandled rejection: ' + (e.reason || '')]);
+        });
+
         window.bones = {
             click: function(x, y) {
                 return callBridge('click', { x: x, y: y });
@@ -180,6 +205,15 @@ class OverlayUIWindow: NSPanel, WKScriptMessageHandler {
             },
             keyCombo: function(keys) {
                 return callBridge('key_combo', { keys: keys });
+            },
+            close: function() {
+                return callBridge('destroy_overlay', {});
+            },
+            runJavaScript: function(js) {
+                return callBridge('run_javascript', { javascript: js });
+            },
+            navigate: function(url) {
+                return callBridge('run_javascript', { javascript: 'window.location.href = "' + url.replace(/"/g, '\\\\"') + '"' });
             }
         };
     })();

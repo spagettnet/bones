@@ -7,6 +7,7 @@ class OverlayManager {
 
     func createOverlay(html: String, width: CGFloat, height: CGFloat, position: String?) {
         destroyOverlay()
+        clearOverlayLogs()
 
         let window = OverlayUIWindow(width: width, height: height)
         window.onBridgeMessage = { [weak self] action, payload, callbackId in
@@ -90,6 +91,23 @@ class OverlayManager {
         guard let window = overlayWindow else { return }
         let escaped = error.replacingOccurrences(of: "'", with: "\\'")
         window.evaluateJS("window.__bonesBridge.reject('\(callbackId)', '\(escaped)')")
+    }
+
+    // MARK: - Overlay Console Logs
+
+    private(set) var overlayLogs: [(level: String, message: String, timestamp: Date)] = []
+    private let maxLogEntries = 200
+
+    func appendOverlayLog(level: String, message: String) {
+        overlayLogs.append((level: level, message: message, timestamp: Date()))
+        if overlayLogs.count > maxLogEntries {
+            overlayLogs.removeFirst(overlayLogs.count - maxLogEntries)
+        }
+        BoneLog.log("Overlay \(level): \(message)")
+    }
+
+    func clearOverlayLogs() {
+        overlayLogs.removeAll()
     }
 
     var hasOverlay: Bool {

@@ -174,7 +174,8 @@ enum InteractionTools {
         return map[name]
     }
 
-    /// Execute JavaScript in the frontmost browser tab via AppleScript.
+    /// Execute JavaScript in the frontmost browser tab via osascript subprocess.
+    /// Uses Process instead of NSAppleScript to avoid in-process sandbox issues.
     /// Works with Safari, Chrome, Arc, and other Chromium browsers.
     static func runJavaScriptInBrowser(js: String, appName: String) async -> ToolResult {
         let escaped = js
@@ -187,33 +188,53 @@ enum InteractionTools {
         let lowerName = appName.lowercased()
 
         if lowerName.contains("safari") {
-            script = """
-            tell application "Safari"
-                do JavaScript "\(escaped)" in front document
-            end tell
-            """
+            script = "tell application \"Safari\" to do JavaScript \"\(escaped)\" in front document"
         } else if lowerName.contains("chrome") || lowerName.contains("chromium") || lowerName.contains("arc") || lowerName.contains("brave") || lowerName.contains("edge") || lowerName.contains("vivaldi") {
-            let chromeAppName = appName
-            script = """
-            tell application "\(chromeAppName)"
-                execute front window's active tab javascript "\(escaped)"
-            end tell
-            """
+            script = "tell application \"\(appName)\" to execute front window's active tab javascript \"\(escaped)\""
         } else {
             return ToolResult(success: false, message: "Unsupported browser: \(appName). Supported: Safari, Chrome, Arc, Brave, Edge.")
         }
 
-        let appleScript = NSAppleScript(source: script)
-        var errorInfo: NSDictionary?
-        let result = appleScript?.executeAndReturnError(&errorInfo)
+        BoneLog.log("InteractionTools: run_javascript in \(appName), script length=\(js.count)")
 
-        if let error = errorInfo {
-            let message = error[NSAppleScript.errorMessage] as? String ?? "AppleScript error"
-            return ToolResult(success: false, message: "JS execution failed: \(message)")
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        proc.arguments = ["-e", script]
+
+        let stdoutPipe = Pipe()
+        let stderrPipe = Pipe()
+        proc.standardOutput = stdoutPipe
+        proc.standardError = stderrPipe
+
+        do {
+            try proc.run()
+            proc.waitUntilExit()
+        } catch {
+            BoneLog.log("InteractionTools: osascript launch failed: \(error)")
+            return ToolResult(success: false, message: "Failed to run osascript: \(error.localizedDescription)")
         }
 
-        let output = result?.stringValue ?? ""
-        return ToolResult(success: true, message: output)
+        let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+        let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+        let stdout = String(data: stdoutData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let stderr = String(data: stderrData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+        if proc.terminationStatus != 0 {
+            BoneLog.log("InteractionTools: osascript failed (exit \(proc.terminationStatus)): \(stderr)")
+            if stderr.contains("JavaScript from Apple Events") || stderr.contains("turned off") || stderr.contains("Allow JavaScript") {
+                return ToolResult(success: false, message: "JS execution is disabled. To enable: open \(appName), go to View > Developer > Allow JavaScript from Apple Events. Then try again.")
+            }
+            if stderr.contains("not authorized") || stderr.contains("not allowed") || stderr.contains("1743") {
+                return ToolResult(success: false, message: "Automation permission denied. Go to System Settings > Privacy & Security > Automation and allow Bones to control \(appName).")
+            }
+            return ToolResult(success: false, message: "JS execution failed: \(stderr)")
+        }
+
+        BoneLog.log("InteractionTools: run_javascript result length=\(stdout.count)")
+        if stdout.isEmpty {
+            return ToolResult(success: true, message: "(JS returned no output — the expression may not return a string value. Wrap in String() or JSON.stringify() if needed.)")
+        }
+        return ToolResult(success: true, message: stdout)
     }
 
     static func checkAccessibilityPermission() -> Bool {

@@ -414,6 +414,21 @@ class AgentBridge {
             overlayManager?.destroyOverlay()
             return toolResult(id: id, text: "Overlay destroyed", isError: false)
 
+        case "get_overlay_logs":
+            guard let om = overlayManager else {
+                return toolResult(id: id, text: "No overlay manager", isError: true)
+            }
+            let logs = om.overlayLogs
+            if logs.isEmpty {
+                return toolResult(id: id, text: "(no overlay logs)", isError: false)
+            }
+            let formatter = DateFormatter()
+            formatter.dateFormat = "HH:mm:ss.SSS"
+            let lines = logs.map { entry in
+                "[\(formatter.string(from: entry.timestamp))] \(entry.level.uppercased()): \(entry.message)"
+            }
+            return toolResult(id: id, text: lines.joined(separator: "\n"), isError: false)
+
         case "show_widget":
             guard let wm = widgetManager else {
                 return toolResult(id: id, text: "Widget manager not available", isError: true)

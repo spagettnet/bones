@@ -245,6 +245,22 @@ class SessionController {
             let result = await InteractionTools.keyCombo(keys: keys, context: context.targetContext)
             overlay.sendBridgeResponse(callbackId: callbackId, result: ["success": result.success, "message": result.message])
 
+        case "destroy_overlay":
+            overlay.destroyOverlay()
+            overlay.sendBridgeResponse(callbackId: callbackId, result: ["success": true])
+
+        case "run_javascript":
+            let js = payload["javascript"] as? String ?? ""
+            let appName = ActiveAppState.shared.appName
+            let result = await InteractionTools.runJavaScriptInBrowser(js: js, appName: appName)
+            overlay.sendBridgeResponse(callbackId: callbackId, result: ["success": result.success, "result": result.message])
+
+        case "_log":
+            let level = payload["level"] as? String ?? "log"
+            let message = payload["message"] as? String ?? ""
+            overlay.appendOverlayLog(level: level, message: message)
+            // No response needed — fire and forget
+
         default:
             overlay.sendBridgeError(callbackId: callbackId, error: "Unknown bridge action: \(action)")
         }

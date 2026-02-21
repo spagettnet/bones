@@ -235,6 +235,19 @@ NATIVE_TOOLS = [
         }
     },
     {
+        "name": "get_overlay_logs",
+        "description": (
+            "Get console logs and errors from the overlay window. "
+            "Shows console.log, console.warn, console.error output and uncaught exceptions. "
+            "Use this to debug overlay issues."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+    },
+    {
         "name": "show_widget",
         "description": (
             "Show a floating widget panel at a position on the target window. "
@@ -328,32 +341,52 @@ SYSTEM_PROMPT = """\
 You are an AI assistant that can see and interact with the user's macOS screen. \
 You are looking at a specific application window.
 
-HOW TO INTERACT:
+HOW TO INTERACT WITH THE APP:
 1. take_screenshot(labeled=true) → see the app with 2-letter element codes (AA, AB, AC...)
-2. click_code(code) → click elements by their code. ALWAYS use this. NEVER guess coordinates.
+2. click_code(code) → click elements by their code. ALWAYS prefer this over raw coordinates.
 3. type_into_code(code, text) → type into input fields by code
 4. key_combo(keys) → keyboard shortcuts e.g. ["cmd","p"], ["cmd","shift","f"]
 5. find_elements(query) → search for elements when codes aren't visible
 6. get_elements → see the full element code map
 
-BROWSER TOOLS (when target is a web browser):
-6. run_javascript(javascript) → execute JS in the browser tab, get results back
-   - Read HTML: run_javascript("document.documentElement.outerHTML")
-   - Get all links: run_javascript("JSON.stringify([...document.querySelectorAll('a')].map(a=>({text:a.textContent.trim(),href:a.href})).filter(a=>a.href&&a.text))")
-   - Click by selector: run_javascript("document.querySelector('.my-button').click()")
-   - Navigate: run_javascript("window.location.href = 'https://...'")
+BROWSER TOOLS (when target is a web browser — Safari, Chrome, Arc, etc.):
+- run_javascript(javascript) → execute JS in the browser tab, get results back
+- IMPORTANT: Always wrap results in JSON.stringify() — raw DOM calls return nothing useful.
+- Use ONE call with a comprehensive query rather than many small calls. Example:
+  run_javascript("JSON.stringify([...document.querySelectorAll('a[href]')].map(a=>({t:a.textContent.trim().substring(0,60),h:a.href})).filter(a=>a.t&&a.h.startsWith('http')))")
+- Other useful patterns:
+  - Navigate: run_javascript("window.location.href='https://...'")
+  - Click: run_javascript("document.querySelector('.btn').click()")
+  - Page info: run_javascript("JSON.stringify({title:document.title,url:location.href})")
+
+OVERLAY TOOLS:
+You can create floating HTML/CSS/JS overlay windows above the target app using create_overlay. \
+Overlays are standalone mini web apps.
+
+Overlay JS API (window.bones.*):
+- window.bones.close() → close/destroy this overlay
+- window.bones.runJavaScript(js) → execute JS in the target browser tab (returns Promise with result)
+- window.bones.navigate(url) → navigate the target browser to a URL
+- window.bones.click(x, y) → click at coordinates in the target app
+- window.bones.clickCode(code) → click a 2-letter element code
+- window.bones.clickElement(label) → click element by accessibility label
+- window.bones.typeText(text), window.bones.keyCombo(keys), etc.
+
+CRITICAL OVERLAY RULES:
+- When building overlays for browser pages, FIRST use run_javascript to extract real URLs, \
+  links, and data from the page DOM. Then build the overlay with real <a href="..."> links \
+  and real navigation — do NOT use window.bones.clickCode() for things that should be links.
+- Overlays should be self-contained web apps. Use real HTML links, real onclick handlers, \
+  real window.bones.navigate(url) for navigation — not proxy everything through bones click tools.
+- Always give overlays a close button that calls window.bones.close().
+- If something goes wrong, use get_overlay_logs to see console errors from the overlay.
 
 RULES:
 - ALWAYS take a labeled screenshot first to see available element codes.
-- ALWAYS use click_code instead of raw click. Only use click(x,y) as an absolute last resort.
-- When on a browser, use run_javascript to read page HTML, get links/URLs, or interact with the DOM.
+- ALWAYS use click_code instead of raw click(x,y) for interacting with the target app.
+- When on a browser, use run_javascript to read page data and build overlays with real links.
 - After performing actions, take another screenshot to verify the result.
 - Briefly describe what you see before and after taking actions.
-
-You also have overlay tools. You can create dynamic HTML/CSS/JS UI overlays that float \
-above the target window. Overlays have access to window.bones.* APIs that can interact \
-with the target app. Use create_overlay to build interactive tools, dashboards, or controls. \
-Use update_overlay to modify them, and destroy_overlay to remove them.
 """
 
 # ---------------------------------------------------------------------------
@@ -365,6 +398,7 @@ class Agent:
         self.client = anthropic.Anthropic(api_key=api_key)
         self.messages = []
         self.cancelled = False
+        self._pending_user_messages = []  # buffered user messages received during tool execution
 
     def handle_init(self, msg: dict):
         """Process init message with screenshot + element codes."""
@@ -399,6 +433,74 @@ class Agent:
         })
         self.run_turn()
 
+    def _read_tool_result(self):
+        """Read messages from stdin until we get a tool_result or cancel.
+
+        User messages that arrive during tool execution are buffered
+        in self._pending_user_messages for later processing.
+        """
+        while True:
+            msg = read_message()
+            if msg is None:
+                return None
+
+            msg_type = msg.get("type")
+            if msg_type == "tool_result":
+                return msg
+            elif msg_type == "cancel":
+                return msg
+            elif msg_type == "user_message":
+                # Buffer for later — user typed while we were waiting for a tool result
+                self._pending_user_messages.append(msg)
+                log(f"buffered user message during tool execution: {msg.get('text', '')[:50]}")
+            else:
+                log(f"unexpected message during tool wait: {msg_type}")
+
+    def _repair_messages(self):
+        """Ensure every assistant tool_use has a matching tool_result.
+
+        If the conversation got corrupted (e.g. crash, race condition),
+        this injects placeholder tool_results so the API call won't fail.
+        """
+        i = 0
+        while i < len(self.messages):
+            msg = self.messages[i]
+            if msg["role"] == "assistant":
+                # Collect tool_use IDs from this assistant message
+                tool_use_ids = []
+                for block in msg.get("content", []):
+                    if isinstance(block, dict) and block.get("type") == "tool_use":
+                        tool_use_ids.append(block["id"])
+
+                if tool_use_ids:
+                    # Check if the next message has matching tool_results
+                    next_msg = self.messages[i + 1] if i + 1 < len(self.messages) else None
+                    existing_result_ids = set()
+                    if next_msg and next_msg["role"] == "user":
+                        for block in next_msg.get("content", []):
+                            if isinstance(block, dict) and block.get("type") == "tool_result":
+                                existing_result_ids.add(block.get("tool_use_id"))
+
+                    missing_ids = [tid for tid in tool_use_ids if tid not in existing_result_ids]
+                    if missing_ids:
+                        log(f"repairing {len(missing_ids)} missing tool_result(s)")
+                        repair_content = [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": tid,
+                                "content": [{"type": "text", "text": "[No result — interrupted]"}],
+                                "is_error": True
+                            }
+                            for tid in missing_ids
+                        ]
+                        if next_msg and next_msg["role"] == "user":
+                            # Prepend missing results to existing user message
+                            next_msg["content"] = repair_content + next_msg.get("content", [])
+                        else:
+                            # Insert a new user message with tool_results
+                            self.messages.insert(i + 1, {"role": "user", "content": repair_content})
+            i += 1
+
     def run_turn(self):
         """Agent loop — stream response, handle tool calls, repeat."""
         max_iterations = 20
@@ -406,20 +508,24 @@ class Agent:
             if self.cancelled:
                 return
 
+            # Repair any corrupted conversation state before calling the API
+            self._repair_messages()
+
             send_message({"type": "streaming_start"})
             full_text = ""
             tool_uses = []
 
             try:
                 with self.client.messages.stream(
-                    model="claude-sonnet-4-5-20250929",
-                    max_tokens=4096,
+                    model="claude-opus-4-6",
+                    max_tokens=16384,
                     system=SYSTEM_PROMPT,
                     tools=NATIVE_TOOLS,
                     messages=self.messages
                 ) as stream:
                     for event in stream:
                         if self.cancelled:
+                            send_message({"type": "streaming_end"})
                             return
 
                         if event.type == "content_block_start":
@@ -474,9 +580,17 @@ class Agent:
             # Handle tool calls
             if stop_reason == "tool_use" and tool_uses:
                 tool_results = []
+                aborted = False
                 for tu in tool_uses:
-                    if self.cancelled:
-                        return
+                    if self.cancelled or aborted:
+                        tool_results.append({
+                            "type": "tool_result",
+                            "tool_use_id": tu["id"],
+                            "content": [{"type": "text", "text": "[Cancelled]"}],
+                            "is_error": True
+                        })
+                        continue
+
                     try:
                         tool_input = json.loads(tu["input_json"]) if tu["input_json"] else {}
                     except json.JSONDecodeError:
@@ -490,14 +604,27 @@ class Agent:
                         "input": tool_input
                     })
 
-                    # Block-read the tool_result from Swift
-                    result_msg = read_message()
-                    if result_msg is None or self.cancelled:
-                        return
+                    # Block-read the tool_result from Swift (skips interleaved user messages)
+                    result_msg = self._read_tool_result()
+                    if result_msg is None:
+                        aborted = True
+                        tool_results.append({
+                            "type": "tool_result",
+                            "tool_use_id": tu["id"],
+                            "content": [{"type": "text", "text": "[Connection lost]"}],
+                            "is_error": True
+                        })
+                        continue
 
                     if result_msg.get("type") == "cancel":
                         self.cancelled = True
-                        return
+                        tool_results.append({
+                            "type": "tool_result",
+                            "tool_use_id": tu["id"],
+                            "content": [{"type": "text", "text": "[Cancelled]"}],
+                            "is_error": True
+                        })
+                        continue
 
                     # Build tool_result content
                     result_content = []
@@ -523,7 +650,12 @@ class Agent:
                         "is_error": result.get("is_error", False)
                     })
 
+                # Always append tool results so the conversation stays valid
                 self.messages.append({"role": "user", "content": tool_results})
+
+                if self.cancelled or aborted:
+                    send_message({"type": "done"})
+                    return
                 # Continue the loop for the next turn
             else:
                 # end_turn — done
@@ -561,6 +693,12 @@ def main():
             if agent:
                 agent.cancelled = False
                 agent.handle_user_message(msg)
+                # Process any user messages that were buffered during tool execution
+                while agent._pending_user_messages:
+                    buffered = agent._pending_user_messages.pop(0)
+                    log(f"processing buffered user message")
+                    agent.cancelled = False
+                    agent.handle_user_message(buffered)
             else:
                 send_message({"type": "error", "message": "Agent not initialized"})
 
