@@ -77,7 +77,12 @@ class DragController {
             cleanup()
             return
         }
+        // Look up full window info and attach before cleanup (which clears currentTargetWindowID)
+        let windowInfo = WindowDetector.windowAt(point: point)
         cleanup()
+        if let windowInfo {
+            ActiveAppState.shared.attach(windowInfo: windowInfo)
+        }
         Task { @MainActor in
             await ScreenshotCapture.capture(windowID: windowID)
         }

@@ -32,12 +32,23 @@ class StatusBarController: NSObject {
         let menu = NSMenu()
         menu.addItem(withTitle: "About Bones", action: #selector(showAbout), keyEquivalent: "")
             .target = self
+
+        let debugItem = NSMenuItem(title: "Debug Panel", action: #selector(toggleDebugPanel), keyEquivalent: "d")
+        debugItem.target = self
+        debugItem.state = DebugPanelWindow.shared.wantsVisible ? .on : .off
+        debugItem.isEnabled = ActiveAppState.shared.isActive
+        menu.addItem(debugItem)
+
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit", action: #selector(quit), keyEquivalent: "q")
             .target = self
         statusItem.menu = menu
         statusItem.button?.performClick(nil)
         statusItem.menu = nil
+    }
+
+    @objc private func toggleDebugPanel() {
+        DebugPanelWindow.shared.toggle()
     }
 
     @objc private func showAbout() {

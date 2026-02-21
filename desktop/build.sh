@@ -20,6 +20,7 @@ swiftc \
     -framework AppKit \
     -framework ScreenCaptureKit \
     -framework CoreGraphics \
+    -framework ApplicationServices \
     -O \
     Sources/main.swift \
     Sources/AppDelegate.swift \
@@ -30,7 +31,12 @@ swiftc \
     Sources/WindowDetector.swift \
     Sources/ScreenshotCapture.swift \
     Sources/LittleGuyRenderer.swift \
-    Sources/FeedbackWindow.swift
+    Sources/FeedbackWindow.swift \
+    Sources/ActiveAppState.swift \
+    Sources/PersistentHighlightWindow.swift \
+    Sources/DebugPanelWindow.swift \
+    Sources/AccessibilityHelper.swift \
+    Sources/InteractableOverlayWindow.swift
 
 echo "==> Copying Info.plist..."
 cp Info.plist "${CONTENTS}/Info.plist"
