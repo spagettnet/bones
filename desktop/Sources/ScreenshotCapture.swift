@@ -102,6 +102,36 @@ enum ScreenshotCapture {
         }
     }
 
+    /// Capture a window at quarter resolution and return raw pixel data for hashing.
+    /// Skips PNG encoding — returns CGImage bitmap data directly. Fast and cheap for comparison.
+    static func captureHashData(windowID: CGWindowID) async -> Data? {
+        do {
+            let content = try await SCShareableContent.excludingDesktopWindows(
+                false, onScreenWindowsOnly: true
+            )
+            guard let scWindow = content.windows.first(where: { $0.windowID == windowID }) else {
+                return nil
+            }
+
+            let filter = SCContentFilter(desktopIndependentWindow: scWindow)
+            let config = SCStreamConfiguration()
+            config.width = max(1, Int(scWindow.frame.width) / 4)
+            config.height = max(1, Int(scWindow.frame.height) / 4)
+            config.captureResolution = .nominal
+            config.showsCursor = false
+
+            let cgImage = try await SCScreenshotManager.captureImage(
+                contentFilter: filter, configuration: config
+            )
+
+            guard let dataProvider = cgImage.dataProvider,
+                  let cfData = dataProvider.data else { return nil }
+            return cfData as Data
+        } catch {
+            return nil
+        }
+    }
+
     static func captureFullScreen() async {
         do {
             guard let mainDisplay = NSScreen.main else {

@@ -8,6 +8,8 @@ struct ChatMessageUI {
     let role: MessageRole
     var text: String
     var isStreaming: Bool
+    var visualizationHTML: String? = nil
+    var visualizationTitle: String? = nil
 }
 
 // MARK: - Delegate
@@ -82,6 +84,29 @@ class ChatController {
         uiMessages.append(ChatMessageUI(
             id: UUID(), role: .user,
             text: "[Screenshot sent] What do you see?",
+            isStreaming: false
+        ))
+        delegate?.chatControllerDidUpdateMessages(self)
+
+        await sendAndProcessResponse()
+    }
+
+    func injectContentChange(imageData: Data) async {
+        guard !isProcessing else {
+            BoneLog.log("ChatController: skipping content change injection — busy")
+            return
+        }
+
+        let base64 = imageData.base64EncodedString()
+        let userContent: [ContentBlock] = [
+            .image(mediaType: "image/png", base64Data: base64),
+            .text("The window content has changed. Here is the updated view.")
+        ]
+        conversationHistory.append(ChatMessage(role: .user, content: userContent))
+
+        uiMessages.append(ChatMessageUI(
+            id: UUID(), role: .user,
+            text: "[Content changed — new screenshot sent]",
             isStreaming: false
         ))
         delegate?.chatControllerDidUpdateMessages(self)
@@ -248,6 +273,21 @@ class ChatController {
             result[key] = convertToJSONValue(value)
         }
         return result
+    }
+
+    private func jsonValueToAny(_ value: JSONValue) -> Any {
+        switch value {
+        case .string(let s): return s
+        case .int(let i): return i
+        case .double(let d): return d
+        case .bool(let b): return b
+        case .null: return NSNull()
+        case .array(let arr): return arr.map { jsonValueToAny($0) }
+        case .object(let dict):
+            var result: [String: Any] = [:]
+            for (k, v) in dict { result[k] = jsonValueToAny(v) }
+            return result
+        }
     }
 
     private func convertToJSONValue(_ value: Any) -> JSONValue {

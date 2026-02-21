@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Partiful Rehearse</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { overflow: hidden; background: #000; font-family: 'Segoe UI', system-ui, sans-serif; }
+    canvas { display: block; }
+
+    /* ---- Location Picker ---- */
+    #location-picker {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 32px;
+      background: #0a0a0f;
+      z-index: 20;
+    }
+
+    .location-card {
+      width: 320px;
+      height: 360px;
+      border-radius: 16px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+      user-select: none;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+    .location-card:hover {
+      transform: translateY(-6px);
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+    }
+
+    .location-card[data-location="party"] {
+      background: linear-gradient(135deg, #1a1a2e 0%, #2d1b4e 100%);
+    }
+    .location-card[data-location="park"] {
+      background: linear-gradient(135deg, #3a2f1a 0%, #5c4a2a 100%);
+    }
+    .location-card[data-location="custom"] {
+      background: linear-gradient(135deg, #0f2b1a 0%, #1a4a2e 100%);
+    }
+    .location-card[data-location="judges"] {
+      background: linear-gradient(135deg, #2a1a0f 0%, #4e3b1b 100%);
+    }
+
+    .location-card .card-title {
+      font-size: 1.8rem;
+      font-weight: 700;
+      color: #fff;
+      margin-bottom: 8px;
+      letter-spacing: 0.03em;
+    }
+    .location-card .card-subtitle {
+      font-size: 1rem;
+      color: rgba(255, 255, 255, 0.5);
+      font-style: italic;
+    }
+
+    /* ---- Profile Input Screen ---- */
+    #profile-input {
+      position: fixed;
+      inset: 0;
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: #0a0a0f;
+      color: #fff;
+      z-index: 20;
+      padding: 40px;
+    }
+    #profile-input .back-link {
+      position: absolute;
+      top: 32px;
+      left: 32px;
+      font-size: 0.9rem;
+      color: rgba(255, 255, 255, 0.5);
+      cursor: pointer;
+      text-decoration: none;
+      transition: color 0.15s;
+    }
+    #profile-input .back-link:hover { color: #fff; }
+
+    #profile-input h2 {
+      font-size: 1.8rem;
+      margin-bottom: 8px;
+      letter-spacing: 0.02em;
+    }
+    #profile-input .hint {
+      font-size: 0.85rem;
+      color: rgba(255, 255, 255, 0.4);
+      margin-bottom: 24px;
+    }
+
+    #profiles-textarea {
+      width: 100%;
+      max-width: 560px;
+      height: 200px;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 10px;
+      color: #e0e0e0;
+      font-family: inherit;
+      font-size: 0.95rem;
+      padding: 16px;
+      resize: vertical;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    #profiles-textarea:focus {
+      border-color: rgba(255, 255, 255, 0.35);
+    }
+    #profiles-textarea::placeholder { color: rgba(255, 255, 255, 0.25); }
+
+    #api-key-input {
+      width: 100%;
+      max-width: 560px;
+      margin-top: 16px;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 10px;
+      color: #e0e0e0;
+      font-family: inherit;
+      font-size: 0.95rem;
+      padding: 12px 16px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    #api-key-input:focus {
+      border-color: rgba(255, 255, 255, 0.35);
+    }
+    #api-key-input::placeholder { color: rgba(255, 255, 255, 0.25); }
+
+    #start-custom-party {
+      margin-top: 20px;
+      padding: 12px 36px;
+      background: #2ecc71;
+      color: #000;
+      border: none;
+      border-radius: 10px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    #start-custom-party:hover { background: #27ae60; }
+
+    #parse-error {
+      margin-top: 12px;
+      color: #e74c3c;
+      font-size: 0.85rem;
+      min-height: 1.2em;
+    }
+
+    /* ---- Photo Assignment Screen ---- */
+    #photo-assign {
+      position: fixed;
+      inset: 0;
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      background: #0a0a0f;
+      color: #fff;
+      z-index: 20;
+      padding: 40px;
+      overflow-y: auto;
+    }
+    #photo-assign .back-link {
+      position: fixed;
+      top: 32px;
+      left: 32px;
+      font-size: 0.9rem;
+      color: rgba(255, 255, 255, 0.5);
+      cursor: pointer;
+      text-decoration: none;
+      transition: color 0.15s;
+      z-index: 21;
+    }
+    #photo-assign .back-link:hover { color: #fff; }
+    #photo-assign h2 {
+      font-size: 1.8rem;
+      margin-bottom: 6px;
+      margin-top: 20px;
+    }
+    #photo-assign .hint {
+      font-size: 0.85rem;
+      color: rgba(255, 255, 255, 0.4);
+      margin-bottom: 28px;
+    }
+    #photo-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 20px;
+      width: 100%;
+      max-width: 720px;
+      margin-bottom: 28px;
+    }
+    .photo-card {
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 12px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+    }
+    .photo-card .pc-name {
+      font-size: 0.9rem;
+      font-weight: 600;
+      text-align: center;
+    }
+    .photo-card .pc-headline {
+      font-size: 0.72rem;
+      color: rgba(255, 255, 255, 0.4);
+      text-align: center;
+      line-height: 1.3;
+    }
+    .photo-drop {
+      width: 96px;
+      height: 96px;
+      border-radius: 50%;
+      border: 2px dashed rgba(255, 255, 255, 0.2);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      overflow: hidden;
+      transition: border-color 0.15s;
+      position: relative;
+    }
+    .photo-drop:hover, .photo-drop.dragover {
+      border-color: rgba(255, 255, 255, 0.5);
+    }
+    .photo-drop .drop-label {
+      font-size: 0.65rem;
+      color: rgba(255, 255, 255, 0.3);
+      text-align: center;
+      pointer-events: none;
+      padding: 0 8px;
+    }
+    .photo-drop img {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      border-radius: 50%;
+    }
+    .photo-drop input[type="file"] {
+      display: none;
+    }
+    #launch-party {
+      padding: 12px 36px;
+      background: #2ecc71;
+      color: #000;
+      border: none;
+      border-radius: 10px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+      margin-bottom: 40px;
+    }
+    #launch-party:hover { background: #27ae60; }
+
+    /* ---- Instructions Overlay ---- */
+    #instructions {
+      position: fixed;
+      inset: 0;
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0, 0, 0, 0.85);
+      color: #fff;
+      z-index: 10;
+      cursor: pointer;
+      user-select: none;
+    }
+    #instructions h1 {
+      font-size: 2.5rem;
+      margin-bottom: 0.5rem;
+      letter-spacing: 0.05em;
+    }
+    #instructions .subtitle {
+      font-size: 1.15rem;
+      opacity: 0.6;
+      font-style: italic;
+      margin-bottom: 1.5rem;
+    }
+    #instructions p {
+      font-size: 1.1rem;
+      opacity: 0.7;
+      line-height: 1.8;
+      text-align: center;
+    }
+    #back-to-picker {
+      position: absolute;
+      top: 32px;
+      left: 32px;
+      font-size: 0.9rem;
+      color: rgba(255, 255, 255, 0.5);
+      cursor: pointer;
+      text-decoration: none;
+      transition: color 0.15s;
+    }
+    #back-to-picker:hover {
+      color: #fff;
+    }
+
+    /* ---- Crosshair ---- */
+    #crosshair {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      width: 6px;
+      height: 6px;
+      background: rgba(255, 255, 255, 0.8);
+      border-radius: 50%;
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+      z-index: 5;
+      display: none;
+    }
+
+    /* ---- Dialogue ---- */
+    #dialogue {
+      position: fixed;
+      bottom: 60px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(10, 10, 20, 0.92);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 12px;
+      padding: 24px 32px;
+      max-width: 520px;
+      width: 90%;
+      z-index: 8;
+      display: none;
+      backdrop-filter: blur(8px);
+    }
+    #dialogue .npc-name {
+      font-size: 0.85rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      margin-bottom: 8px;
+    }
+    #dialogue .npc-message {
+      color: #e0e0e0;
+      font-size: 1.05rem;
+      line-height: 1.6;
+      margin-bottom: 12px;
+    }
+    #dialogue .dismiss-hint {
+      color: rgba(255, 255, 255, 0.35);
+      font-size: 0.75rem;
+    }
+
+    /* ---- Chat Dialogue ---- */
+    #chat-dialogue {
+      position: fixed;
+      bottom: 40px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(10, 10, 20, 0.95);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 14px;
+      width: 480px;
+      max-width: 92%;
+      max-height: 420px;
+      z-index: 12;
+      display: none;
+      flex-direction: column;
+      backdrop-filter: blur(10px);
+      overflow: hidden;
+    }
+    #chat-dialogue .chat-header {
+      padding: 14px 20px 10px;
+      font-size: 0.85rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    #chat-messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      min-height: 120px;
+      max-height: 260px;
+    }
+    #chat-messages .msg {
+      max-width: 85%;
+      padding: 8px 14px;
+      border-radius: 10px;
+      font-size: 0.92rem;
+      line-height: 1.5;
+      word-wrap: break-word;
+    }
+    #chat-messages .msg.user {
+      align-self: flex-end;
+      background: rgba(255, 255, 255, 0.12);
+      color: #e0e0e0;
+    }
+    #chat-messages .msg.npc {
+      align-self: flex-start;
+      background: rgba(255, 255, 255, 0.05);
+      color: #ccc;
+    }
+    #chat-messages .msg .msg-label {
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 3px;
+      opacity: 0.6;
+    }
+    .chat-bottom {
+      padding: 10px 16px 14px;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    #chat-input {
+      flex: 1;
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 8px;
+      color: #e0e0e0;
+      font-family: inherit;
+      font-size: 0.9rem;
+      padding: 8px 12px;
+      outline: none;
+    }
+    #chat-input:focus { border-color: rgba(255, 255, 255, 0.3); }
+    #chat-input::placeholder { color: rgba(255, 255, 255, 0.25); }
+    #chat-status {
+      font-size: 0.72rem;
+      color: rgba(255, 255, 255, 0.35);
+      padding: 0 20px 8px;
+      min-height: 1em;
+    }
+    .chat-dismiss {
+      text-align: center;
+      font-size: 0.7rem;
+      color: rgba(255, 255, 255, 0.25);
+      padding-bottom: 10px;
+    }
+  </style>
+</head>
+<body>
+  <div id="location-picker">
+    <div class="location-card" data-location="party">
+      <div class="card-title">The Party</div>
+      <div class="card-subtitle">A loft in the city</div>
+    </div>
+    <div class="location-card" data-location="park">
+      <div class="card-title">The Park</div>
+      <div class="card-subtitle">Golden hour in the Village</div>
+    </div>
+    <div class="location-card" data-location="custom">
+      <div class="card-title">Custom Party</div>
+      <div class="card-subtitle">Bring your own guest list</div>
+    </div>
+    <div class="location-card" data-location="judges">
+      <div class="card-title">Meet the Judges</div>
+      <div class="card-subtitle">AI Tinkerers demo night</div>
+    </div>
+  </div>
+
+  <div id="profile-input">
+    <a class="back-link" id="profile-back">&larr; Back</a>
+    <h2>Who's coming to the party?</h2>
+    <div class="hint">Paste LinkedIn profiles separated by blank lines. First line = name, second = headline.</div>
+    <textarea id="profiles-textarea" placeholder="Jane Smith
+Senior Engineer at Acme Corp
+Loves hiking and board games
+
+John Doe
+Product Designer at Startup Inc
+Coffee enthusiast"></textarea>
+    <input type="password" id="api-key-input" placeholder="Claude API key (sk-ant-...)" />
+    <button id="start-custom-party">Start Party</button>
+    <div id="parse-error"></div>
+  </div>
+
+  <div id="photo-assign">
+    <a class="back-link" id="photo-back">&larr; Back</a>
+    <h2>Add photos</h2>
+    <div class="hint">Click or drag a photo onto each person. Skip any you don't have.</div>
+    <div id="photo-grid"></div>
+    <button id="launch-party">Start Party</button>
+  </div>
+
+  <div id="instructions">
+    <a id="back-to-picker">&larr; Choose location</a>
+    <h1 id="instructions-title"></h1>
+    <div class="subtitle" id="instructions-subtitle"></div>
+    <p>Click to enter<br>WASD to move &middot; Mouse to look around<br>Click on people to talk</p>
+  </div>
+
+  <div id="crosshair"></div>
+
+  <div id="dialogue">
+    <div class="npc-name" id="dialogue-name"></div>
+    <div class="npc-message" id="dialogue-message"></div>
+    <div class="dismiss-hint">press E or click to close</div>
+  </div>
+
+  <div id="chat-dialogue">
+    <div class="chat-header" id="chat-npc-name"></div>
+    <div id="chat-messages"></div>
+    <div id="chat-status"></div>
+    <div class="chat-bottom">
+      <input type="text" id="chat-input" placeholder="Say something..." autocomplete="off" />
+    </div>
+    <div class="chat-dismiss">⌘E to close</div>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

@@ -75,6 +75,17 @@ class SessionController {
         )
         self.sidebarWindow = sidebar
 
+        // Fan-out window tracking to both sidebar and widget manager
+        tracker.onBoundsChanged = { [weak sidebar, weak wm] newBounds in
+            let newFrame = SidebarWindow.sidebarFrame(forTargetBounds: newBounds, sidebarWidth: 340)
+            sidebar?.setFrame(newFrame, display: true, animate: false)
+            wm?.targetWindowMoved(newBounds: newBounds)
+        }
+        tracker.onWindowClosed = { [weak self] in
+            self?.endSession()
+        }
+        tracker.startTracking()
+
         sidebar.makeKeyAndOrderFront(nil)
 
         await bridge.start(apiKey: apiKey)
