@@ -33,6 +33,7 @@ class DragController {
 
                 if !isDragging && distance > dragThreshold {
                     isDragging = true
+                    BoneLog.log("DragController: drag threshold crossed, creating DragWindow")
                     dragWindow = DragWindow()
                     highlightWindow = HighlightWindow()
                     dragWindow?.startPhysics()
@@ -89,6 +90,10 @@ class DragController {
         ActiveAppState.shared.attach(windowInfo: windowInfo)
         
         // Freeze skeleton before tearing down drag UI.
+
+        BoneLog.log("DragController: handleDrop at \(point), windowInfo bounds=\(windowInfo.bounds)")
+
+        // Freeze the skeleton and get its final pose
         let finalPose = dragWindow?.freezeAndGetPose() ?? SkeletonDefinition.restPose(hangingFrom: point)
         let dragFrame = dragWindow?.frame ?? .zero
         let dropPoint = point
@@ -109,12 +114,14 @@ class DragController {
         let animation = BoneBreakAnimation()
         self.breakAnimation = animation
 
+        BoneLog.log("DragController: starting break animation, dragFrame=\(dragFrame)")
         animation.play(
             fromPose: finalPose,
             dragWindowFrame: dragFrame,
-            targetWindowBounds: windowInfo.bounds,
+            targetWindowInfo: windowInfo,
             dropPoint: dropPoint
         ) { [weak self] in
+            BoneLog.log("DragController: break animation complete, starting session")
             self?.breakAnimation = nil
             Task { @MainActor in
                 await self?.sessionController?.startSession(windowInfo: windowInfo)

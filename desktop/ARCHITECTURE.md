@@ -124,8 +124,15 @@ The sidebar is in `SidebarWindow.swift`. Key areas:
 - `createBubble(for:containerWidth:yOffset:)` builds individual message bubbles:
   - User messages: blue background, right-aligned
   - Assistant messages: gray background, left-aligned
-  - Text is rendered in `NSTextField(wrappingLabelWithString:)`, no markdown support
+  - Text is rendered as rich markdown in `NSTextView` via `renderMarkdown()`
 - Streaming messages show `" ..."` suffix
+
+### Markdown rendering
+- `renderMarkdown(_:baseColor:)` converts Claude's markdown output to `NSAttributedString`
+- Uses `AttributedString(markdown:options: .inlineOnlyPreservingWhitespace)` (macOS 12+)
+- Walks the parsed result to apply correct fonts at 13pt: bold, italic, monospace for inline code
+- Inline code gets a subtle `.backgroundColor` highlight
+- Fallback `renderCodeBlocks()` handles fenced ``` code blocks manually when the system parser can't
 
 ### Delegate callbacks
 `ChatControllerDelegate` has two methods:

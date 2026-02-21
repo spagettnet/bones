@@ -39,20 +39,18 @@ class WindowTracker {
             [.optionIncludingWindow], windowID
         ) as? [[String: Any]],
         let info = windowList.first,
-        let boundsDict = info[kCGWindowBounds as String] as? [String: Any]
+        let boundsDict = info[kCGWindowBounds as String]
         else {
             onWindowClosed?()
             stopTracking()
             return
         }
 
-        guard let x = boundsDict["X"] as? CGFloat,
-              let y = boundsDict["Y"] as? CGFloat,
-              let w = boundsDict["Width"] as? CGFloat,
-              let h = boundsDict["Height"] as? CGFloat
-        else { return }
+        // Use the canonical API to parse CG rect dictionaries
+        var bounds = CGRect.zero
+        let cfDict = boundsDict as CFTypeRef as! CFDictionary
+        guard CGRectMakeWithDictionaryRepresentation(cfDict, &bounds) else { return }
 
-        let bounds = CGRect(x: x, y: y, width: w, height: h)
         if bounds != lastBounds {
             lastBounds = bounds
             onBoundsChanged?(bounds)

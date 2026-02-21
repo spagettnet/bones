@@ -12,7 +12,8 @@ enum KeychainHelper {
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
             kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne
+            kSecMatchLimit as String: kSecMatchLimitOne,
+            kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip
         ]
 
         var result: AnyObject?
@@ -73,8 +74,10 @@ enum KeychainHelper {
         alert.addButton(withTitle: "Save")
         alert.addButton(withTitle: "Cancel")
 
-        let input = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
+        let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
         input.placeholderString = "sk-ant-..."
+        input.isEditable = true
+        input.isSelectable = true
         alert.accessoryView = input
         alert.window.initialFirstResponder = input
 
