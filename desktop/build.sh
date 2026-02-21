@@ -8,6 +8,10 @@ CONTENTS="${APP_BUNDLE}/Contents"
 MACOS="${CONTENTS}/MacOS"
 RESOURCES="${CONTENTS}/Resources"
 
+echo "==> Killing existing Bones process..."
+pkill -x Bones 2>/dev/null || true
+sleep 0.5
+
 echo "==> Cleaning previous build..."
 rm -rf "${BUILD_DIR}"
 
@@ -20,6 +24,8 @@ swiftc \
     -framework AppKit \
     -framework ScreenCaptureKit \
     -framework CoreGraphics \
+    -framework QuartzCore \
+    -framework AVFoundation \
     -framework Security \
     -O \
     Sources/main.swift \
@@ -32,7 +38,11 @@ swiftc \
     Sources/WindowDetector.swift \
     Sources/WindowTracker.swift \
     Sources/ScreenshotCapture.swift \
-    Sources/LittleGuyRenderer.swift \
+    Sources/SkeletonRenderer.swift \
+    Sources/SkeletonPhysics.swift \
+    Sources/BoneSoundEngine.swift \
+    Sources/BoneBreakAnimation.swift \
+    Sources/DogAnimation.swift \
     Sources/FeedbackWindow.swift \
     Sources/SidebarWindow.swift \
     Sources/ChatController.swift \

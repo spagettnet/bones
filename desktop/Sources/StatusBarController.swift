@@ -14,7 +14,7 @@ class StatusBarController: NSObject {
         dragController.sessionController = sessionController
 
         if let button = statusItem.button {
-            button.image = LittleGuyRenderer.menuBarImage()
+            button.image = SkeletonRenderer.menuBarImage()
             button.image?.isTemplate = true
             button.sendAction(on: [.leftMouseDown, .rightMouseUp])
             button.action = #selector(statusBarAction(_:))
