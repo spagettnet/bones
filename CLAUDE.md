@@ -90,6 +90,31 @@ open build/Bones.app
 - Python agent logs to stderr with `[agent]` prefix — forwarded to BoneLog
 - Tail the log with: `tail -f ~/Desktop/bones-debug.log`
 
+## Redis Shared Overlay Store
+
+Overlays can be shared across sessions via Redis Vector Search. When a user builds an overlay (e.g. a PR dashboard for github.com), they can publish it to Redis so other sessions discover it automatically.
+
+### Architecture
+
+- All Redis interaction happens in Python (`agent/redis_store.py`)
+- Three "hybrid" tools execute in Python but use silent IPC to Swift for local file I/O
+- Redis Stack required locally: `redis-stack-server` or `docker run -p 6379:6379 redis/redis-stack`
+- Embeddings via Voyage AI API (`voyage-3-lite`, 512 dims) — no local models
+
+### Tools
+
+- `publish_overlay` — share a saved overlay to Redis with tags
+- `search_shared_overlays` — `exact` (same domain) or `similar` (cross-domain semantic search)
+- `download_shared_overlay` — fetch from Redis, save locally, display
+
+### Hybrid Execution
+
+Python tools in `PYTHON_TOOLS` set are intercepted in `run_turn()` before being sent to Swift. They call `_execute_python_tool()` which can still IPC to Swift via `_send_silent_tool()` (with `"silent": True` to skip UI noise).
+
+### Redis Schema
+
+Key pattern: `bones:overlay:{domain}:{id}`. RediSearch index `idx:overlays` with TAG (domain, tags), TEXT (name, description), and VECTOR (embedding) fields.
+
 ## Conventions (All Packages)
 
 - Each top-level directory is a self-contained package with its own build tooling

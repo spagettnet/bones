@@ -376,20 +376,32 @@ class AgentBridge {
             }
 
         case "assistant_message":
-            // Full text already streamed — no additional UI action needed
-            break
+            // If it has a source (e.g. "redis"), show as a new message with source badge
+            if let source = msg["source"] as? String, let text = msg["text"] as? String {
+                uiMessages.append(ChatMessageUI(
+                    id: UUID(), role: .assistant,
+                    text: text,
+                    isStreaming: false,
+                    source: source
+                ))
+                delegate?.agentBridgeDidUpdateMessages(self)
+            }
+            // Otherwise, full text was already streamed — no additional UI action needed
 
         case "tool_use":
             let toolName = msg["name"] as? String ?? "unknown"
             let toolId = msg["id"] as? String ?? ""
             let toolInput = msg["input"] as? [String: Any] ?? [:]
+            let isSilent = msg["silent"] as? Bool ?? false
 
-            uiMessages.append(ChatMessageUI(
-                id: UUID(), role: .assistant,
-                text: "Using \(toolName)...",
-                isStreaming: false
-            ))
-            delegate?.agentBridgeDidUpdateMessages(self)
+            if !isSilent {
+                uiMessages.append(ChatMessageUI(
+                    id: UUID(), role: .assistant,
+                    text: "Using \(toolName)...",
+                    isStreaming: false
+                ))
+                delegate?.agentBridgeDidUpdateMessages(self)
+            }
 
             // Execute tool natively and send result back
             Task {

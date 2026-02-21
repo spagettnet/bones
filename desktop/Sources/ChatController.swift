@@ -17,6 +17,7 @@ struct ChatMessageUI {
     var options: [ChatOption]? = nil
     var visualizationHTML: String? = nil
     var visualizationTitle: String? = nil
+    var source: String? = nil  // "redis" = shared store badge
 }
 
 // MARK: - Delegate

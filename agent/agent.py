@@ -669,6 +669,14 @@ class Agent:
             context.append({"type": "text", "text": codes_text})
         if msg.get("page_url"):
             context.append({"type": "text", "text": f"Page URL: {msg['page_url']}"})
+            # Extract domain for Redis lookups
+            try:
+                from urllib.parse import urlparse
+                parsed = urlparse(msg["page_url"])
+                self._page_domain = parsed.netloc or ""
+                log(f"page domain: {self._page_domain}")
+            except Exception:
+                pass
         if msg.get("site_apps"):
             apps_text = "AVAILABLE SITE APPS for this page:\n"
             for app in msg["site_apps"]:
@@ -688,6 +696,27 @@ class Agent:
                 "Use load_overlay(id='...') to restore a saved overlay instantly."
             )
             context.append({"type": "text", "text": saved_text})
+        # Redis shared overlay discovery
+        if self._page_domain:
+            try:
+                store = self._get_redis_store()
+                if store:
+                    shared = store.search_exact(self._page_domain, limit=5)
+                    if shared:
+                        shared_text = "SHARED OVERLAYS available from other sessions (Redis):\n"
+                        for s in shared:
+                            shared_text += f"- {s.get('name', '?')} (key: {s['_key']}): {s.get('description', '')}\n"
+                        shared_text += (
+                            "\nMention these to the user — they can download them instantly with "
+                            "download_shared_overlay(redis_key='...'). "
+                            "You can also search for similar overlays from other sites with "
+                            "search_shared_overlays(mode='similar', query='...')."
+                        )
+                        context.append({"type": "text", "text": shared_text})
+                        log(f"found {len(shared)} shared overlays for {self._page_domain}")
+            except Exception as e:
+                log(f"Redis discovery failed (non-fatal): {e}")
+
         self._init_context = context
         log("init context stored, generating suggestions")
         self._generate_suggestions(msg)
@@ -1064,6 +1093,29 @@ class Agent:
                         tool_input = json.loads(tu["input_json"]) if tu["input_json"] else {}
                     except json.JSONDecodeError:
                         tool_input = {}
+
+                    # Check if this is a Python-executed tool
+                    if tu["name"] in PYTHON_TOOLS:
+                        result = self._execute_python_tool(tu["name"], tool_input)
+                        result_content = []
+                        if result.get("text"):
+                            result_content.append({"type": "text", "text": result["text"]})
+                        if not result_content:
+                            result_content.append({"type": "text", "text": "(no output)"})
+                        # Send source info to UI if result came from Redis
+                        if result.get("source") == "redis":
+                            send_message({
+                                "type": "assistant_message",
+                                "text": result["text"],
+                                "source": "redis",
+                            })
+                        tool_results.append({
+                            "type": "tool_result",
+                            "tool_use_id": tu["id"],
+                            "content": result_content,
+                            "is_error": result.get("is_error", False)
+                        })
+                        continue
 
                     # Send tool_use to Swift for native execution
                     send_message({

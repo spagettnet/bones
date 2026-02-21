@@ -298,12 +298,32 @@ class SidebarWindow: NSPanel, AgentBridgeDelegate {
                 display: block;
                 background: white;
             }
+            .redis-badge {
+                display: inline-flex;
+                align-items: center;
+                gap: 4px;
+                font-size: 10px;
+                font-weight: 600;
+                color: #D82C20;
+                background: rgba(216, 44, 32, 0.08);
+                border: 1px solid rgba(216, 44, 32, 0.2);
+                border-radius: 6px;
+                padding: 2px 6px;
+                margin-bottom: 4px;
+                letter-spacing: 0.3px;
+                text-transform: uppercase;
+            }
+            .redis-badge::before {
+                content: '\\25CF';
+                font-size: 8px;
+            }
             @media (prefers-color-scheme: dark) {
                 .bubble.assistant { background: rgba(255, 255, 255, 0.08); }
                 .bubble code { background: rgba(255, 255, 255, 0.1); }
                 .bubble pre { background: rgba(255, 255, 255, 0.08); }
                 .bubble.visualization { background: rgba(255, 255, 255, 0.04); border-color: rgba(255,255,255,0.1); }
                 .viz-title { color: rgba(255,255,255,0.5); border-bottom-color: rgba(255,255,255,0.08); }
+                .redis-badge { color: #FF6B6B; background: rgba(255, 107, 107, 0.1); border-color: rgba(255, 107, 107, 0.25); }
             }
         </style>
         <script>\(markedJS)</script>
@@ -350,7 +370,15 @@ class SidebarWindow: NSPanel, AgentBridgeDelegate {
                         div.className = 'bubble ' + msg.role;
                         if (msg.isStreaming) div.classList.add('streaming');
                         if (msg.isStatus) div.classList.add('status-only');
-                        div.innerHTML = renderMarkdown(msg.text);
+                        if (msg.source === 'redis') {
+                            var badge = document.createElement('div');
+                            badge.className = 'redis-badge';
+                            badge.textContent = 'Shared store';
+                            div.appendChild(badge);
+                        }
+                        var content = document.createElement('div');
+                        content.innerHTML = renderMarkdown(msg.text);
+                        div.appendChild(content);
                         if (msg.options && msg.options.length > 0) {
                             var optDiv = document.createElement('div');
                             optDiv.className = 'options-container';
@@ -451,6 +479,9 @@ class SidebarWindow: NSPanel, AgentBridgeDelegate {
             }
             if let vizTitle = msg.visualizationTitle {
                 entry["visualizationTitle"] = vizTitle
+            }
+            if let source = msg.source {
+                entry["source"] = source
             }
             jsonMessages.append(entry)
         }

@@ -5,7 +5,7 @@ Demo
 https://github.com/user-attachments/assets/2414cf58-a2b3-477d-9be0-81c27df180d0
 
 
- 
+
  Overview
 
   Bones is a macOS menu bar tool that replaces the traditional AI chat window with an agent-driven interaction model that can see your screen and collaborate with you on it. A pixel-art skeleton lives in your menu bar — grab him with your
@@ -47,3 +47,60 @@ https://github.com/user-attachments/assets/2414cf58-a2b3-477d-9be0-81c27df180d0
   - The run_javascript tool gives Claude deep access to browser DOM for web-based workflows.
 
   Claude's reasoning determines what UI exists, where it appears, and what it does.
+
+---
+
+## <img src="https://redis.io/wp-content/uploads/2024/04/Logotype.svg?auto=webp&quality=85,75&width=120" alt="Redis" height="20"> Shared Overlay Store
+
+Overlays can be shared across Bones sessions via **Redis Vector Search**. Build an overlay once — share it everywhere.
+
+### How it works
+
+```
+You build a PR dashboard on github.com
+        |
+        v
+   publish_overlay  ──>  Redis (with vector embedding)
+        |
+        v
+Next session on github.com discovers it automatically
+        |
+        v
+Someone on gitlab.com finds it via semantic search and adapts it
+```
+
+### Setup
+
+Redis Stack is required for the vector search + JSON modules:
+
+```bash
+# Option A: brew
+brew install redis-stack
+redis-stack-server
+
+# Option B: Docker
+docker run -d -p 6379:6379 redis/redis-stack
+```
+
+Embeddings use the **Voyage AI API** (`voyage-3-lite`, 512 dimensions). Set `VOYAGE_API_KEY` in your environment, or it falls back to your Anthropic API key.
+
+### Tools
+
+| Tool | Description |
+|------|-------------|
+| `publish_overlay` | Share a saved overlay to Redis with tags for discovery |
+| `search_shared_overlays` | Find overlays — `exact` (same domain) or `similar` (semantic cross-domain) |
+| `download_shared_overlay` | Fetch from Redis, save locally, and display |
+
+### Example
+
+```
+You: "publish this overlay"
+Bones: Published to shared store: bones:overlay:github.com:pr-dashboard
+
+--- new session on github.com ---
+
+Bones: "I found shared overlays for this site:
+        - PR Dashboard (key: bones:overlay:github.com:pr-dashboard)
+        Would you like to load it?"
+```
