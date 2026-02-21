@@ -112,6 +112,10 @@ class SessionController {
         sidebarWindow?.toggleDebugTab()
     }
 
+    func sendModelUpdate(_ modelID: String) {
+        agentBridge?.sendModelUpdate(modelID)
+    }
+
     // MARK: - Bridge Action Handler (for overlay window.bones.* API)
 
     private func handleBridgeAction(action: String, payload: [String: Any], callbackId: String, context: ToolExecutionContext) async {

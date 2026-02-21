@@ -153,6 +153,12 @@ class AgentBridge {
         delegate?.agentBridgeDidUpdateMessages(self)
     }
 
+    func sendModelUpdate(_ modelID: String) {
+        guard isRunning else { return }
+        sendToProcess(["type": "set_model", "model": modelID])
+        BoneLog.log("AgentBridge: sent model update to \(modelID)")
+    }
+
     func sendUserMessage(text: String) {
         guard isRunning else { return }
 

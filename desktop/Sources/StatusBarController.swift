@@ -126,6 +126,8 @@ class StatusBarController: NSObject {
         if let modelID = sender.representedObject as? String {
             ModelSetting.shared.currentModelID = modelID
             BoneLog.log("StatusBar: model set to \(modelID)")
+            // Push to running agent immediately
+            sessionController.sendModelUpdate(modelID)
         }
     }
 

@@ -7,6 +7,7 @@ Logs go to stderr (forwarded to BoneLog by Swift).
 import json
 import sys
 import base64
+import uuid
 import anthropic
 
 # ---------------------------------------------------------------------------
@@ -442,7 +443,72 @@ NATIVE_TOOLS = [
             "required": ["id"]
         }
     },
+    {
+        "name": "publish_overlay",
+        "description": (
+            "Publish a locally saved overlay to the shared Redis store so other Bones sessions "
+            "can discover and use it. The overlay must already be saved locally via save_overlay."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "description": "ID of the saved overlay to publish"
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Tags for discovery (e.g. ['dashboard', 'code-review'])"
+                }
+            },
+            "required": ["id"]
+        }
+    },
+    {
+        "name": "search_shared_overlays",
+        "description": (
+            "Search the shared Redis store for overlays published by other sessions. "
+            "Use mode='exact' to find overlays for the current domain, or mode='similar' "
+            "to find related overlays from any domain via semantic search."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "mode": {
+                    "type": "string",
+                    "enum": ["exact", "similar"],
+                    "description": "Search mode: 'exact' for same domain, 'similar' for cross-domain semantic search"
+                },
+                "query": {
+                    "type": "string",
+                    "description": "Search query (required for 'similar' mode, optional for 'exact')"
+                }
+            },
+            "required": ["mode"]
+        }
+    },
+    {
+        "name": "download_shared_overlay",
+        "description": (
+            "Download a shared overlay from Redis, save it locally, and display it. "
+            "Use after search_shared_overlays to fetch a specific overlay."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "redis_key": {
+                    "type": "string",
+                    "description": "Full Redis key (e.g. 'bones:overlay:github.com:pr-dashboard')"
+                }
+            },
+            "required": ["redis_key"]
+        }
+    },
 ]
+
+# Tools that execute directly in Python (no Swift round-trip for main logic)
+PYTHON_TOOLS = {"publish_overlay", "search_shared_overlays", "download_shared_overlay"}
 
 SYSTEM_PROMPT = """\
 You are an AI assistant that can see and interact with the user's macOS screen. \
@@ -495,6 +561,14 @@ PERSISTENT OVERLAYS:
 - When saved overlays are available for the current site/app, offer to load them with load_overlay.
 - For throwaway overlays, create_overlay is still fine. But for anything substantial, use save_overlay.
 
+SHARED OVERLAY STORE (Redis):
+- publish_overlay → share a saved overlay with other sessions via Redis. Others can discover it.
+- search_shared_overlays(mode='exact') → find overlays published for this exact domain.
+- search_shared_overlays(mode='similar', query='...') → find related overlays from ANY domain via semantic search.
+- download_shared_overlay(redis_key) → download from Redis, save locally, and display.
+- When shared overlays are available for the current domain, proactively mention them.
+- If a user asks to share/publish an overlay, use publish_overlay after saving it locally first.
+
 RULES:
 - ALWAYS take a labeled screenshot first to see available element codes.
 - ALWAYS use click_code instead of raw click(x,y) for interacting with the target app.
@@ -540,6 +614,9 @@ _TOOL_STATUS_MAP = {
     "run_javascript": "Running JavaScript...",
     "visualize": "Rendering visualization...",
     "launch_site_app": "Launching app...",
+    "publish_overlay": "Publishing to shared store...",
+    "search_shared_overlays": "Searching shared overlays...",
+    "download_shared_overlay": "Downloading shared overlay...",
 }
 
 def _tool_status_message(tool_name: str) -> str:
@@ -565,6 +642,9 @@ class Agent:
         self.cancelled = False
         self._pending_user_messages = []  # buffered user messages received during tool execution
         self._init_context = None  # screenshot + element codes from init, prepended to first message
+        self._api_key = api_key
+        self._page_domain = ""  # extracted from page_url during init
+        self._redis_store = None  # lazy-loaded SharedOverlayStore
 
     def handle_init(self, msg: dict):
         """Store init context (screenshot, elements, etc.) without triggering a Claude turn.
@@ -623,6 +703,179 @@ class Agent:
             content.append({"type": "text", "text": msg["text"]})
         self.messages.append({"role": "user", "content": content})
         self.run_turn()
+
+    def _get_redis_store(self):
+        """Lazy-load the SharedOverlayStore."""
+        if self._redis_store is None:
+            try:
+                from redis_store import SharedOverlayStore
+                self._redis_store = SharedOverlayStore(api_key=self._api_key)
+                if not self._redis_store.is_available():
+                    log("Redis not available")
+                    self._redis_store = None
+            except Exception as e:
+                log(f"Redis store init failed: {e}")
+                self._redis_store = None
+        return self._redis_store
+
+    def _send_silent_tool(self, tool_name: str, tool_input: dict) -> dict:
+        """Send an internal tool_use to Swift with silent=True and wait for result.
+
+        Used by Python-executed tools that need Swift for local file I/O.
+        """
+        silent_id = f"silent-{uuid.uuid4().hex[:8]}"
+        send_message({
+            "type": "tool_use",
+            "id": silent_id,
+            "name": tool_name,
+            "input": tool_input,
+            "silent": True,
+        })
+        result_msg = self._read_tool_result()
+        if result_msg is None or result_msg.get("type") == "cancel":
+            return {"text": "[Connection lost]", "is_error": True}
+        return result_msg.get("result", {})
+
+    def _execute_python_tool(self, tool_name: str, tool_input: dict) -> dict:
+        """Execute a Python-side tool and return a tool result content dict."""
+        store = self._get_redis_store()
+
+        if tool_name == "publish_overlay":
+            overlay_id = tool_input.get("id", "")
+            tags = tool_input.get("tags", [])
+            if not overlay_id:
+                return {"text": "Missing 'id' parameter", "is_error": True}
+            if not self._page_domain:
+                return {"text": "No domain available — are you on a web page?", "is_error": True}
+            if not store:
+                return {"text": "Redis is not available. Start redis-stack-server first.", "is_error": True}
+
+            # Read overlay source from Swift
+            source_result = self._send_silent_tool("read_overlay_source", {"id": overlay_id})
+            if source_result.get("is_error"):
+                return {"text": f"Could not read overlay: {source_result.get('text', 'unknown error')}", "is_error": True}
+            html = source_result.get("text", "")
+            if not html:
+                return {"text": "Overlay has no HTML content", "is_error": True}
+
+            # Read overlay metadata from the list
+            list_result = self._send_silent_tool("list_saved_overlays", {})
+            name = overlay_id
+            description = ""
+            width = 400
+            height = 300
+            position = "top-right"
+            if not list_result.get("is_error"):
+                # Parse overlay list to find metadata — rough but functional
+                for line in list_result.get("text", "").split("\n"):
+                    if f"(id: {overlay_id})" in line:
+                        # Format: "- Name (id: xxx): description"
+                        parts = line.split("(id:", 1)
+                        if parts[0].strip().startswith("- "):
+                            name = parts[0].strip()[2:].strip()
+                        desc_parts = line.split("):", 1)
+                        if len(desc_parts) > 1:
+                            description = desc_parts[1].strip()
+                        break
+
+            try:
+                key = store.publish(
+                    overlay={
+                        "id": overlay_id,
+                        "name": name,
+                        "description": description,
+                        "html": html,
+                        "width": width,
+                        "height": height,
+                        "position": position,
+                    },
+                    domain=self._page_domain,
+                    tags=tags,
+                )
+                return {"text": f"Published to shared store: {key}", "is_error": False, "source": "redis"}
+            except Exception as e:
+                return {"text": f"Publish failed: {e}", "is_error": True}
+
+        elif tool_name == "search_shared_overlays":
+            mode = tool_input.get("mode", "exact")
+            query = tool_input.get("query", "")
+            if not store:
+                return {"text": "Redis is not available. Start redis-stack-server first.", "is_error": True}
+
+            try:
+                if mode == "exact":
+                    if not self._page_domain:
+                        return {"text": "No domain available — are you on a web page?", "is_error": True}
+                    results = store.search_exact(self._page_domain)
+                    if not results:
+                        return {"text": f"No shared overlays found for {self._page_domain}", "is_error": False}
+                    lines = []
+                    for r in results:
+                        lines.append(f"- {r.get('name', '?')} (key: {r['_key']}): {r.get('description', '')}")
+                    return {
+                        "text": f"Shared overlays for {self._page_domain}:\n" + "\n".join(lines),
+                        "is_error": False,
+                        "source": "redis",
+                    }
+                elif mode == "similar":
+                    if not query:
+                        return {"text": "Query required for similar search", "is_error": True}
+                    results = store.search_similar(
+                        query, exclude_domain=self._page_domain or None
+                    )
+                    if not results:
+                        return {"text": "No similar overlays found", "is_error": False}
+                    lines = []
+                    for r in results:
+                        score = r.get("score", "?")
+                        lines.append(
+                            f"- {r.get('name', '?')} [{r.get('domain', '?')}] "
+                            f"(key: {r['_key']}, score: {score}): {r.get('description', '')}"
+                        )
+                    return {
+                        "text": "Similar overlays from other domains:\n" + "\n".join(lines),
+                        "is_error": False,
+                        "source": "redis",
+                    }
+                else:
+                    return {"text": f"Unknown mode: {mode}. Use 'exact' or 'similar'.", "is_error": True}
+            except Exception as e:
+                return {"text": f"Search failed: {e}", "is_error": True}
+
+        elif tool_name == "download_shared_overlay":
+            redis_key = tool_input.get("redis_key", "")
+            if not redis_key:
+                return {"text": "Missing 'redis_key' parameter", "is_error": True}
+            if not store:
+                return {"text": "Redis is not available. Start redis-stack-server first.", "is_error": True}
+
+            try:
+                overlay = store.get_overlay(redis_key)
+                if not overlay:
+                    return {"text": f"Overlay not found: {redis_key}", "is_error": True}
+
+                # Save locally and display via Swift
+                save_result = self._send_silent_tool("save_overlay", {
+                    "id": overlay["id"],
+                    "name": overlay.get("name", overlay["id"]),
+                    "description": overlay.get("description", ""),
+                    "html": overlay["html"],
+                    "width": overlay.get("width", 400),
+                    "height": overlay.get("height", 300),
+                    "position": overlay.get("position"),
+                })
+                if save_result.get("is_error"):
+                    return {"text": f"Download OK but local save failed: {save_result.get('text', '')}", "is_error": True}
+
+                return {
+                    "text": f"Downloaded '{overlay.get('name', overlay['id'])}' from {overlay.get('domain', '?')} and saved locally.",
+                    "is_error": False,
+                    "source": "redis",
+                }
+            except Exception as e:
+                return {"text": f"Download failed: {e}", "is_error": True}
+
+        return {"text": f"Unknown Python tool: {tool_name}", "is_error": True}
 
     def _read_tool_result(self):
         """Read messages from stdin until we get a tool_result or cancel.
@@ -747,19 +1000,24 @@ class Agent:
                     stop_reason = final.stop_reason
 
             except anthropic.APIStatusError as e:
-                if e.status_code in (429, 529) and self._try_fallback_model():
-                    # Overloaded/rate-limited — switched model, retry this turn
+                if self._is_overloaded(e) and self._try_fallback_model():
                     send_message({"type": "streaming_end"})
                     send_message({"type": "streaming_start"})
                     full_text = ""
                     tool_uses = []
                     continue
-                log(f"API error: {e}")
+                log(f"API status error: {e}")
                 send_message({"type": "streaming_end"})
                 send_message({"type": "error", "message": str(e)})
                 return
 
             except Exception as e:
+                if self._is_overloaded(e) and self._try_fallback_model():
+                    send_message({"type": "streaming_end"})
+                    send_message({"type": "streaming_start"})
+                    full_text = ""
+                    tool_uses = []
+                    continue
                 log(f"API error: {e}")
                 send_message({"type": "streaming_end"})
                 send_message({"type": "error", "message": str(e)})
@@ -883,48 +1141,63 @@ class Agent:
     ]
 
     def _generate_suggestions(self, msg: dict):
-        """Quick Claude call to generate contextual quick-action suggestions from the screenshot."""
+        """Quick Claude call to generate contextual suggestions from the screenshot."""
         content = []
         if msg.get("screenshot_base64"):
-            content.append({
-                "type": "image",
-                "source": {
-                    "type": "base64",
-                    "media_type": msg.get("screenshot_media_type", "image/png"),
-                    "data": msg["screenshot_base64"]
-                }
-            })
+            # Downsample the image for faster processing — suggestions don't need full res
+            img_data = base64.b64decode(msg["screenshot_base64"])
+            small = self._downsample_image(img_data)
+            if small:
+                content.append({
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/jpeg",
+                        "data": base64.b64encode(small).decode()
+                    }
+                })
+            else:
+                content.append({
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": msg.get("screenshot_media_type", "image/png"),
+                        "data": msg["screenshot_base64"]
+                    }
+                })
         if msg.get("page_url"):
             content.append({"type": "text", "text": f"URL: {msg['page_url']}"})
 
         content.append({"type": "text", "text": (
-            "Look at this screenshot. Generate exactly 3 quick-action suggestions for the user. "
-            "Each should be a short button label (max 6 words) and a longer value (the actual instruction). "
-            "The 3 categories are:\n"
-            "1. Describe/explain what's on screen\n"
-            "2. Organize or build a useful UI for the content\n"
-            "3. Gameify or make the content fun/interactive\n\n"
-            "Also write a short greeting (1 sentence) that references what app/site you see.\n\n"
-            "Respond ONLY with JSON, no markdown:\n"
-            '{"greeting": "...", "suggestions": [{"label": "...", "value": "..."}, ...]}'
+            "3 button labels for this screen. JSON only, no markdown.\n"
+            '{"g":"short greeting","s":['
+            '{"l":"label","v":"instruction"},'
+            '{"l":"label","v":"instruction"},'
+            '{"l":"label","v":"instruction"}]}\n'
+            "Categories: 1)describe 2)organize 3)gameify. Labels max 4 words."
         )})
 
         try:
             response = self.client.messages.create(
-                model="claude-sonnet-4-6",
-                max_tokens=400,
+                model="claude-haiku-4-5-20251001",
+                max_tokens=250,
                 messages=[{"role": "user", "content": content}]
             )
             text = response.content[0].text.strip()
-            # Strip markdown code fence if present
             if text.startswith("```"):
                 text = text.split("\n", 1)[1] if "\n" in text else text[3:]
                 if text.endswith("```"):
                     text = text[:-3]
                 text = text.strip()
             data = json.loads(text)
-            suggestions = data.get("suggestions", self._DEFAULT_SUGGESTIONS)
-            greeting = data.get("greeting", "What would you like to do?")
+            # Support both short and long key names
+            suggestions = data.get("suggestions") or data.get("s", self._DEFAULT_SUGGESTIONS)
+            if suggestions and isinstance(suggestions[0], dict):
+                suggestions = [
+                    {"label": s.get("label") or s.get("l", ""), "value": s.get("value") or s.get("v", "")}
+                    for s in suggestions
+                ]
+            greeting = data.get("greeting") or data.get("g", "What would you like to do?")
             log(f"generated {len(suggestions)} suggestions")
             send_message({
                 "type": "suggestions",
@@ -938,6 +1211,34 @@ class Agent:
                 "greeting": "What would you like to do?",
                 "suggestions": self._DEFAULT_SUGGESTIONS
             })
+
+    @staticmethod
+    def _downsample_image(png_data: bytes, max_dim: int = 512) -> bytes | None:
+        """Downsample a PNG to a small JPEG for fast processing. Returns None on failure."""
+        try:
+            import io
+            from PIL import Image
+            img = Image.open(io.BytesIO(png_data))
+            img.thumbnail((max_dim, max_dim), Image.LANCZOS)
+            buf = io.BytesIO()
+            img.convert("RGB").save(buf, format="JPEG", quality=50)
+            return buf.getvalue()
+        except ImportError:
+            return None
+        except Exception:
+            return None
+
+    @staticmethod
+    def _is_overloaded(e: Exception) -> bool:
+        """Check if an exception is an overloaded/rate-limit error."""
+        # Check anthropic SDK status code
+        if hasattr(e, 'status_code') and e.status_code in (429, 529):
+            return True
+        # Check error message string for overloaded_error type
+        err_str = str(e).lower()
+        if 'overloaded' in err_str or 'rate_limit' in err_str:
+            return True
+        return False
 
     def _try_fallback_model(self) -> bool:
         """Try switching to the next model in the fallback chain. Returns True if switched."""
@@ -994,6 +1295,12 @@ def main():
                     agent.handle_user_message(buffered)
             else:
                 send_message({"type": "error", "message": "Agent not initialized"})
+
+        elif msg_type == "set_model":
+            if agent:
+                new_model = msg.get("model", agent.model)
+                log(f"model changed: {agent.model} -> {new_model}")
+                agent.model = new_model
 
         elif msg_type == "cancel":
             if agent:
