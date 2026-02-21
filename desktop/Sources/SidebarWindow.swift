@@ -9,8 +9,6 @@ class SidebarWindow: NSPanel, ChatControllerDelegate {
     private var tabControl: NSSegmentedControl!
     private var chatContainer: NSView!
     private var debugView: SidebarDebugView!
-    private var scrollView: NSScrollView!
-    private var messageContainer: NSView!
     private var webView: WKWebView!
     private var inputField: NSTextField!
     private var webViewReady = false
@@ -137,17 +135,11 @@ class SidebarWindow: NSPanel, ChatControllerDelegate {
             x: 0, y: inputHeight,
             width: chatContainer.bounds.width,
             height: chatContainer.bounds.height - inputHeight
-        ))
-        scrollView.autoresizingMask = [.width, .height]
-        scrollView.hasVerticalScroller = true
-        scrollView.drawsBackground = false
-            width: contentView.bounds.width,
-            height: contentView.bounds.height - inputHeight
         ), configuration: config)
         webView.autoresizingMask = [.width, .height]
         webView.setValue(false, forKey: "drawsBackground")
         webView.navigationDelegate = self
-        contentView.addSubview(webView)
+        chatContainer.addSubview(webView)
 
         loadChatHTML()
     }
@@ -165,7 +157,6 @@ class SidebarWindow: NSPanel, ChatControllerDelegate {
             markedJS = String(data: data, encoding: .utf8) ?? ""
         }
 
-        chatContainer.addSubview(scrollView)
         debugView.setVisible(false)
         let html = """
         <!DOCTYPE html>
