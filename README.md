@@ -1,3 +1,11 @@
+Demo
+
+
+
+https://github.com/user-attachments/assets/2414cf58-a2b3-477d-9be0-81c27df180d0
+
+
+ 
  Overview
 
   Bones is a macOS menu bar tool that replaces the traditional AI chat window with an agent-driven interaction model that can see your screen and collaborate with you on it. A pixel-art skeleton lives in your menu bar — grab him with your
