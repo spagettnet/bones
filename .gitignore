@@ -1,0 +1,22 @@
+# Build outputs
+desktop/build/
+*.app
+
+# macOS
+.DS_Store
+
+# Python (agent)
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Node (overlay)
+node_modules/
+dist/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
