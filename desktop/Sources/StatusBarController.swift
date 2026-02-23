@@ -1,4 +1,5 @@
 import AppKit
+import ServiceManagement
 
 @MainActor
 class ModelSetting {
@@ -98,6 +99,12 @@ class StatusBarController: NSObject {
         menu.addItem(modelItem)
 
         menu.addItem(.separator())
+
+        let launchItem = NSMenuItem(title: "Launch at Login", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
+        launchItem.target = self
+        launchItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
+        menu.addItem(launchItem)
+
         menu.addItem(withTitle: "Set API Key...", action: #selector(setAPIKey), keyEquivalent: "")
             .target = self
         menu.addItem(withTitle: "End Chat Session", action: #selector(endSession), keyEquivalent: "")
@@ -128,6 +135,21 @@ class StatusBarController: NSObject {
             BoneLog.log("StatusBar: model set to \(modelID)")
             // Push to running agent immediately
             sessionController.sendModelUpdate(modelID)
+        }
+    }
+
+    @objc private func toggleLaunchAtLogin() {
+        let service = SMAppService.mainApp
+        do {
+            if service.status == .enabled {
+                try service.unregister()
+                BoneLog.log("StatusBar: disabled launch at login")
+            } else {
+                try service.register()
+                BoneLog.log("StatusBar: enabled launch at login")
+            }
+        } catch {
+            BoneLog.log("StatusBar: launch at login toggle failed: \(error)")
         }
     }
 

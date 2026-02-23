@@ -32,6 +32,7 @@ swiftc \
     -framework AVFoundation \
     -framework Security \
     -framework WebKit \
+    -framework ServiceManagement \
     -O \
     Sources/main.swift \
     Sources/AppDelegate.swift \
