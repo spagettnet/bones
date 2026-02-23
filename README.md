@@ -1,3 +1,5 @@
+[![AI Tinkerers Hackathon — 1st Place](https://img.shields.io/badge/AI_Tinkerers_Hackathon-1st_Place_%F0%9F%8F%86-gold)](https://nyc.aitinkerers.org/p/interfaces-hackathon-with-claude) [![Experimental](https://img.shields.io/badge/status-experimental_%E2%9A%A0%EF%B8%8F-orange)]()
+
 Demo
 
 
@@ -70,6 +72,12 @@ Someone on gitlab.com finds it via semantic search and adapts it
 ```
 
 ### Setup
+
+
+
+> [!WARNING]
+> This project is experimental and incomplete. Use with caution.
+
 
 Redis Stack is required for the vector search + JSON modules:
 
